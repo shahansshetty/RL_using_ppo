@@ -383,43 +383,119 @@ class Falcon9LandingEnv(gym.Env):
                 
         return reward
 
+    # def _check_termination(self, obs):
+    #     """Check if episode should terminate"""
+    #     pos = obs[0:3]
+    #     vel = obs[3:6]
+    #     quat = obs[6:10]
+    #     print(f'pos: {pos}')
+    #     print(f'vel :{vel}')
+    #     print(f'quat :{quat }')
+        
+    #     altitude = pos[2]
+    #     speed = np.linalg.norm(vel)
+    #     horizontal_distance = np.sqrt((pos[0] - self.target_x)**2 + (pos[1] - self.target_y)**2)
+    #     print(f'speed:{speed}')
+    #     # Get upright score
+    #     rotation_matrix = np.array(p.getMatrixFromQuaternion(quat)).reshape(3, 3)
+    #     upright_score = rotation_matrix[2,2]
+        
+    #     terminated = False
+    #     truncated = False
+        
+    #     # Successful landing conditions
+    #     if (altitude < 0.5 and speed < 1.0 and upright_score > 0.8 and 
+    #         horizontal_distance < self.landing_zone_radius):
+    #         terminated = True
+            
+    #     # Crash conditions
+    #     elif altitude < 0.2 and (speed > 1.0 ):
+    #         terminated = True
+            
+    #     # Out of bounds
+    #     elif horizontal_distance > 50.0 or altitude > 50.0:
+    #         terminated = True
+            
+    #     # Time limit
+    #     elif self.step_count >= self.max_steps:
+    #         truncated = True
+            
+    #     return terminated, truncated
+
     def _check_termination(self, obs):
         """Check if episode should terminate"""
         pos = obs[0:3]
         vel = obs[3:6]
         quat = obs[6:10]
-        print(f'pos: {pos}')
-        print(f'vel :{vel}')
-        print(f'quat :{quat }')
         
         altitude = pos[2]
         speed = np.linalg.norm(vel)
         horizontal_distance = np.sqrt((pos[0] - self.target_x)**2 + (pos[1] - self.target_y)**2)
-        print(f'speed:{speed}')
-        # Get upright score
-        rotation_matrix = np.array(p.getMatrixFromQuaternion(quat)).reshape(3, 3)
-        upright_score = rotation_matrix[:, 2][2]
+        
+        # Get upright score - Check if rocket exists first
+        if self.rocket is None:
+            return False, True  # Truncated if no rocket
+        
+        try:
+            # More robust quaternion handling
+            rotation_matrix = np.array(p.getMatrixFromQuaternion(quat)).reshape(3, 3)
+            upright_score = rotation_matrix[2, 2]  # Correct indexing for z-component
+        except Exception as e:
+            print(f"Error calculating upright score: {e}")
+            upright_score = 0.0
         
         terminated = False
         truncated = False
         
+        # Debug prints (you can remove these later)
+        print(f"Alt: {altitude:.2f}, Speed: {speed:.2f}, H_Dist: {horizontal_distance:.2f}, Upright: {upright_score:.2f}")
+        
         # Successful landing conditions
-        if (altitude < 0.5 and speed < 1.0 and upright_score > 0.8 and 
-            horizontal_distance < self.landing_zone_radius):
+        if altitude <= 0.5:  # On or very close to ground
+            if (speed < 5.0 and upright_score > 0.6 and horizontal_distance < self.landing_zone_radius):
+                terminated = True
+                print("🚀 SUCCESSFUL LANDING!")
+                return terminated, truncated
+            
+            # Crash conditions - if on ground but conditions not met
+            elif speed > 3.0:  # More lenient speed threshold
+                print("💥 CRASHED - Too fast!")
+                terminated = True
+                return terminated, truncated
+            
+            elif upright_score < 0.3:  # More lenient upright threshold
+                print("💥 CRASHED - Tipped over!")
+                terminated = True
+                return terminated, truncated
+                
+            elif horizontal_distance > self.landing_zone_radius * 2:  # More lenient distance
+                print("💥 CRASHED - Missed landing zone!")
+                terminated = True
+                return terminated, truncated
+        
+        # Out of bounds - More reasonable bounds
+        if horizontal_distance > 100.0:
+            print("🚫 OUT OF BOUNDS - Too far horizontally!")
             terminated = True
             
-        # Crash conditions
-        elif altitude < 0.2 and (speed > 1.0 ):
+        elif altitude > 100.0:
+            print("🚫 OUT OF BOUNDS - Too high!")
             terminated = True
             
-        # Out of bounds
-        elif horizontal_distance > 50.0 or altitude > 50.0:
+        elif altitude < -2.0:  # Below ground by significant margin
+            print("🚫 OUT OF BOUNDS - Underground!")
             terminated = True
-            
+        
         # Time limit
-        elif self.step_count >= self.max_steps:
+        if self.step_count >= self.max_steps:
+            print("⏰ TIME LIMIT REACHED!")
             truncated = True
-            
+        
+        # Fuel depletion check
+        if self.fuel_remaining <= 0 and altitude > 2.0:
+            print("⛽ OUT OF FUEL!")
+            terminated = True
+        
         return terminated, truncated
 
     def render(self):
