@@ -31,22 +31,22 @@ class Falcon9LandingEnv(gym.Env):
         "render_fps": 60,
     }
 
-    def __init__(self, render_mode="human", rocket_urdf_path=r"C:\Users\Lenovo\Desktop\falcon9_project\rocket.urdf", landing_pad_urdf_path=r"C:\Users\Lenovo\Desktop\falcon9_project\landing_pad.urdf"):
+    def __init__(self, render_mode="human", rocket_urdf_path=r"C:\Users\Lenovo\Desktop\falcon9_project\assets\rocket.urdf", landing_pad_urdf_path=r"C:\Users\Lenovo\Desktop\falcon9_project\assets\landing_pad.urdf"):
         super().__init__()
         self.render_mode = render_mode
         
         # Action space: [main_thrust, rcs_x, rcs_y, rcs_z]
-        # self.action_space = spaces.Box(
-        #     low=np.array([0.0, -1.0, -1.0, -1.0], dtype=np.float32),
-        #     high=np.array([1.0, 1.0, 1.0, 1.0], dtype=np.float32),
-        #     dtype=np.float32
-        # )
-
-        #corrected
         self.action_space = spaces.Box(
-    low=np.array([-1.0] * 15, dtype=np.float32),  # 4 thrusters * (3 directions + 1 magnitude)
-    high=np.array([1.0] * 15, dtype=np.float32),
-    dtype=np.float32)
+            low=np.array([0.0, -1.0, -1.0, -1.0], dtype=np.float32),
+            high=np.array([1.0, 1.0, 1.0, 1.0], dtype=np.float32),
+            dtype=np.float32
+        )
+
+    #     #corrected
+    #     self.action_space = spaces.Box(
+    # low=np.array([-1.0] * 15, dtype=np.float32),  # 4 thrusters * (3 directions + 1 magnitude)
+    # high=np.array([1.0] * 15, dtype=np.float32),
+    # dtype=np.float32)
 
         
         # Observation space: pos(3) + vel(3) + quat(4) + angvel(3) + fuel(1) = 14 dims
@@ -55,7 +55,7 @@ class Falcon9LandingEnv(gym.Env):
         )
         
         # Physics parameters
-        self.max_main_thrust = 25000.0  # Newtons
+        self.max_main_thrust = 30000.0  # Newtons
         self.max_rcs_thrust = 5000.0    # Newtons
         self.rocket_mass = 2000.0       # kg
         self.initial_fuel = 1000.0      # kg
@@ -73,7 +73,7 @@ class Falcon9LandingEnv(gym.Env):
         # Target landing zone
         self.target_x = 0.0
         self.target_y = 0.0
-        self.landing_zone_radius = 5.0  # meters
+        self.landing_zone_radius = 10.0  # meters
         
         # Set paths to your URDF files
         self._setup_urdf_paths(rocket_urdf_path, landing_pad_urdf_path)
@@ -277,13 +277,108 @@ class Falcon9LandingEnv(gym.Env):
             "step_count": self.step_count
         }
 
+    def _create_engine_particles(self, position, orientation, thrust_intensity):
+        """Create particle effects for main engine thrust"""
+        
+        # Get rocket's orientation matrix
+        rotation_matrix = np.array(p.getMatrixFromQuaternion(orientation)).reshape(3, 3)
+        
+        # Engine exhaust comes out opposite to thrust direction (downward from rocket)
+        exhaust_direction = -rotation_matrix[:, 2]  # Opposite to local z-axis
+        
+        # Engine position (bottom of rocket)
+        engine_local_pos = [0, 0, -3.8]  # Bottom of rocket in local coordinates
+        engine_world_pos = position + rotation_matrix @ engine_local_pos
+        
+        # Create multiple exhaust particles based on thrust intensity
+        num_particles = int(thrust_intensity * 4)  # More particles for higher thrust
+        
+        for i in range(num_particles):
+            # Random spread for realistic exhaust plume
+            spread = 0.1 + thrust_intensity * 0.5  # Larger spread for higher thrust
+            random_offset = np.random.uniform(-spread, spread, 3)
+            random_offset[2] *= 0.3  # Less vertical spread
+            
+            # Particle start position (slightly randomized around engine)
+            particle_start = engine_world_pos + random_offset
+            
+            # Particle end position (exhaust plume)
+            exhaust_length = 3.0 + thrust_intensity * 2.0  # Longer plume for higher thrust
+            particle_end = particle_start + exhaust_direction * exhaust_length + random_offset * 0.5
+            
+            # Color based on thrust intensity (blue to orange/red)
+            if thrust_intensity < 0.3:
+                color = [0.3, 0.5, 1.0]  # Blue flame (low thrust)
+            elif thrust_intensity < 0.7:
+                color = [0.8, 0.6, 0.2]  # Orange flame (medium thrust)
+            else:
+                color = [1.0, 0.3, 0.1]  # Red flame (high thrust)
+            
+            # Add some randomness to color
+            color = [c + np.random.uniform(-0.1, 0.1) for c in color]
+            color = [max(0, min(1, c)) for c in color]  # Clamp to [0,1]
+            
+            # Draw particle line
+            p.addUserDebugLine(
+                particle_start,
+                particle_end,
+                lineColorRGB=color,
+                lineWidth=2.0 + thrust_intensity * 2.0,
+                lifeTime=0.05  # Short life for flickering effect
+            )
+    
+    def _create_rcs_particles(self, position, orientation, rcs_x, rcs_y, rcs_z):
+        """Create particle effects for RCS thrusters"""
+        
+        rotation_matrix = np.array(p.getMatrixFromQuaternion(orientation)).reshape(3, 3)
+        
+        # RCS thruster positions around the rocket (simplified - 4 positions)
+        rcs_positions = [
+            [2.0, 0, 1.25],    # Right side
+            [-2.0, 0, 1.25],   # Left side  
+            [0, 2.0, 1.25],    # Front
+            [0, -2.0, 1.25]    # Back
+        ]
+        
+        # RCS firing intensity
+        rcs_intensities = [abs(rcs_x), abs(rcs_x), abs(rcs_y), abs(rcs_y)]
+        
+        for i, (local_pos, intensity) in enumerate(zip(rcs_positions, rcs_intensities)):
+            if intensity > 0.1:  # Only show particles if thruster is firing
+                
+                # Transform to world coordinates
+                world_pos = position + rotation_matrix @ local_pos
+                
+                # RCS exhaust direction (perpendicular to rocket)
+                if i < 2:  # Side thrusters (roll control)
+                    exhaust_dir = rotation_matrix[:, 0] * (1 if i == 0 else -1)  # X-axis
+                else:  # Front/back thrusters (pitch control)
+                    exhaust_dir = rotation_matrix[:, 1] * (1 if i == 2 else -1)  # Y-axis
+                
+                # Create small RCS exhaust plume
+                num_rcs_particles = int(intensity * 5)
+                for j in range(num_rcs_particles):
+                    particle_start = world_pos + np.random.uniform(-0.2, 0.2, 3)
+                    particle_end = particle_start + exhaust_dir * (0.5 + intensity * 1.0)
+                    
+                    # White/blue RCS exhaust
+                    color = [0.8, 0.9, 1.0]
+                    
+                    p.addUserDebugLine(
+                        particle_start,
+                        particle_end,
+                        lineColorRGB=color,
+                        lineWidth=1.0,
+                        lifeTime=0.03
+                    )
+    
     def step(self, action):
         """Execute one time step in the environment"""
         action = np.clip(action, self.action_space.low, self.action_space.high)
        
         main_thrust = action[0]
         rcs_x, rcs_y, rcs_z = action[1], action[2], action[3]
-        # print(f'main:{main_thrust},rcs_x:{rcs_x},y:{rcs_y},z:{rcs_z}')
+        
         # Check if we have fuel
         if self.fuel_remaining <= 0:
             main_thrust = 0.0
@@ -306,18 +401,27 @@ class Falcon9LandingEnv(gym.Env):
                 self.rocket, -1, thrust_vector, thrust_point, p.LINK_FRAME
             )
             
+            # ADD MAIN ENGINE PARTICLE EFFECTS
+            if self.render_mode == "human":
+                self._create_engine_particles(position, orientation, main_thrust)
+            
             # Consume fuel
             fuel_used = main_thrust * self.fuel_consumption_rate * (1.0/60.0)  # Per frame
             self.fuel_remaining = max(0, self.fuel_remaining - fuel_used)
-
+    
         # Apply RCS thrusters for attitude control
-        rcs_torque_strength = self.max_rcs_thrust * 0.001  # Convert to torque scale
+        rcs_torque_strength = self.max_rcs_thrust * 0.01  # Convert to torque scale
         torque = [
             rcs_x * rcs_torque_strength,  # Roll
             rcs_y * rcs_torque_strength,  # Pitch
             rcs_z * rcs_torque_strength   # Yaw
         ]
         p.applyExternalTorque(self.rocket, -1, torque, p.LINK_FRAME)
+        
+        # ADD RCS PARTICLE EFFECTS
+        if self.render_mode == "human" and (abs(rcs_x) > 0.1 or abs(rcs_y) > 0.1 or abs(rcs_z) > 0.1):
+            position, orientation = p.getBasePositionAndOrientation(self.rocket)
+            self._create_rcs_particles(position, orientation, rcs_x, rcs_y, rcs_z)
         
         # Step simulation multiple times for stability
         for _ in range(4):  # 4 substeps per environment step
@@ -327,103 +431,219 @@ class Falcon9LandingEnv(gym.Env):
         
         # Get new observation
         observation = self._get_observation()
-        reward = self._calculate_reward(observation)
-        terminated, truncated = self._check_termination(observation)
+        terminated, truncated, landed = self._check_termination(observation)
+        reward = self._calculate_reward(observation,landed,terminated)
         info = self._get_info()
+        
+        # Add landing info to info dict
+        info["landed_successfully"] = landed
         
         if self.render_mode == "human":
             time.sleep(1.0/60.0)  # Keep real-time rendering
         
+        # FIX: Return only 5 values as per gymnasium standard
         return observation, reward, terminated, truncated, info
 
-    def _calculate_reward(self, obs):
+    def _calculate_reward(self, obs, landed, terminated):
         """Calculate reward based on current state"""
-        pos = obs[0:3]
-        vel = obs[3:6] 
-        quat = obs[6:10]
-        ang_vel = obs[10:13]
-        fuel_frac = obs[13]
+        if landed:
+            return 100.0 # Large bonus for successful landing
+        if terminated and not landed:
+            return -100.0 # Large penalty for crashing
+
+        pos, vel, quat, ang_vel, _ = obs[0:3], obs[3:6], obs[6:10], obs[10:13], obs[13]
         
-        # Distance from target landing zone
         horizontal_distance = np.sqrt((pos[0] - self.target_x)**2 + (pos[1] - self.target_y)**2)
         altitude = pos[2]
         speed = np.linalg.norm(vel)
         angular_speed = np.linalg.norm(ang_vel)
         
-        # Compute upright orientation bonus
-        # Convert quaternion to rotation matrix and get z-axis component
         rotation_matrix = np.array(p.getMatrixFromQuaternion(quat)).reshape(3, 3)
-        up_vector = rotation_matrix[:, 2]  # Local z-axis in world coordinates
-        upright_score = up_vector[2]  # How much the rocket points up (1.0 = perfectly upright)
+        upright_score = rotation_matrix[2, 2]
         
-        # Reward components
+        # Reward shaping
         reward = 0.0
+        reward -= horizontal_distance * 0.5  # Penalize distance from target
+        reward -= speed * 0.1                # Penalize high speed
+        reward -= angular_speed * 0.2        # Penalize spinning
+        reward += upright_score * 0.2        # Reward being upright
         
-        # Encourage staying close to target horizontally
-        reward -= horizontal_distance * 2.0
-        
-        # Encourage being upright
-        reward += upright_score * 5.0
-        
-        # Penalize high speeds (encourage gentle landing)
-        reward -= speed * 0.5
-        reward -= angular_speed * 2.0
-        
-        # Small fuel efficiency bonus
-        reward += fuel_frac * 0.1
-        
-        # Height-dependent rewards (encourage controlled descent)
-        if altitude < 2.0:
-            # Close to landing - require very controlled approach
-            reward -= speed * 5.0  # Heavy penalty for fast landing
-            reward += upright_score * 10.0  # Heavy bonus for being upright
-            
-            if horizontal_distance < self.landing_zone_radius:
-                reward += 20.0  # In landing zone
-                
+        # Reward for getting closer (potential-based reward)
+        # You could store previous distance to calculate this, but for simplicity we'll keep it direct
+        reward -= altitude * 0.1 # Encourage descent
+
         return reward
+
+
+
+
+
+
+
 
     # def _check_termination(self, obs):
     #     """Check if episode should terminate"""
     #     pos = obs[0:3]
     #     vel = obs[3:6]
     #     quat = obs[6:10]
-    #     print(f'pos: {pos}')
-    #     print(f'vel :{vel}')
-    #     print(f'quat :{quat }')
         
     #     altitude = pos[2]
     #     speed = np.linalg.norm(vel)
     #     horizontal_distance = np.sqrt((pos[0] - self.target_x)**2 + (pos[1] - self.target_y)**2)
-    #     print(f'speed:{speed}')
-    #     # Get upright score
-    #     rotation_matrix = np.array(p.getMatrixFromQuaternion(quat)).reshape(3, 3)
-    #     upright_score = rotation_matrix[2,2]
+        
+    #     # Get upright score - Check if rocket exists first
+    #     if self.rocket is None:
+    #         return False, True  # Truncated if no rocket
+        
+    #     try:
+    #         # More robust quaternion handling
+    #         rotation_matrix = np.array(p.getMatrixFromQuaternion(quat)).reshape(3, 3)
+    #         upright_score = rotation_matrix[2, 2]  # Correct indexing for z-component
+    #     except Exception as e:
+    #         print(f"Error calculating upright score: {e}")
+    #         upright_score = 0.0
         
     #     terminated = False
     #     truncated = False
         
+    #     # Debug prints (you can remove these later)
+    #     print(f"Alt: {altitude:.2f}, Speed: {speed:.2f}, H_Dist: {horizontal_distance:.2f}, Upright: {upright_score:.2f}")
+        
     #     # Successful landing conditions
-    #     if (altitude < 0.5 and speed < 1.0 and upright_score > 0.8 and 
-    #         horizontal_distance < self.landing_zone_radius):
+    #     if altitude <= 1:  # On or very close to ground
+    #         if (speed < 5.0 and upright_score > 0.6 and horizontal_distance < self.landing_zone_radius):
+    #             terminated = True
+    #             print("🚀 SUCCESSFUL LANDING!")
+    #             return terminated, truncated
+            
+    #         # Crash conditions - if on ground but conditions not met
+    #         elif speed > 3.0:  # More lenient speed threshold
+    #             print("💥 CRASHED - Too fast!")
+    #             terminated = True
+    #             return terminated, truncated
+            
+    #         elif upright_score < 0.3:  # More lenient upright threshold
+    #             print("💥 CRASHED - Tipped over!")
+    #             terminated = True
+    #             return terminated, truncated
+                
+    #         elif horizontal_distance > self.landing_zone_radius * 2:  # More lenient distance
+    #             print("💥 CRASHED - Missed landing zone!")
+    #             terminated = True
+    #             return terminated, truncated
+        
+    #     # Out of bounds - More reasonable bounds
+    #     if horizontal_distance > 100.0:
+    #         print("🚫 OUT OF BOUNDS - Too far horizontally!")
     #         terminated = True
             
-    #     # Crash conditions
-    #     elif altitude < 0.2 and (speed > 1.0 ):
+    #     elif altitude > 100.0:
+    #         print("🚫 OUT OF BOUNDS - Too high!")
     #         terminated = True
             
-    #     # Out of bounds
-    #     elif horizontal_distance > 50.0 or altitude > 50.0:
+    #     elif altitude < -2.0:  # Below ground by significant margin
+    #         print("🚫 OUT OF BOUNDS - Underground!")
     #         terminated = True
-            
+        
     #     # Time limit
-    #     elif self.step_count >= self.max_steps:
+    #     if self.step_count >= self.max_steps:
+    #         print("⏰ TIME LIMIT REACHED!")
     #         truncated = True
-            
+        
+    #     # Fuel depletion check
+    #     if self.fuel_remaining <= 0 and altitude > 2.0:
+    #         print("⛽ OUT OF FUEL!")
+    #         terminated = True
+        
     #     return terminated, truncated
 
+#more lenient
+
+    # def _check_termination(self, obs):
+    #     """Check if episode should terminate"""
+    #     pos = obs[0:3]
+    #     vel = obs[3:6]
+    #     quat = obs[6:10]
+        
+    #     altitude = pos[2]
+    #     speed = np.linalg.norm(vel)
+    #     horizontal_distance = np.sqrt((pos[0] - self.target_x)**2 + (pos[1] - self.target_y)**2)
+        
+    #     # Get upright score - Check if rocket exists first
+    #     if self.rocket is None:
+    #         return False, True  # Truncated if no rocket
+        
+    #     try:
+    #         # More robust quaternion handling
+    #         rotation_matrix = np.array(p.getMatrixFromQuaternion(quat)).reshape(3, 3)
+    #         upright_score = rotation_matrix[2, 2]  # Correct indexing for z-component
+    #     except Exception as e:
+    #         print(f"Error calculating upright score: {e}")
+    #         upright_score = 0.0
+        
+    #     terminated = False
+    #     truncated = False
+    #     landed=False
+        
+    #     # Debug prints (you can remove these later)
+    #     print(f"Alt: {altitude:.2f}, Speed: {speed:.2f}, H_Dist: {horizontal_distance:.2f}, Upright: {upright_score:.2f}")
+        
+    #     # MUCH MORE LENIENT LANDING CONDITIONS
+    #     if altitude <= 5.0:  # Increased altitude threshold
+    #         # Check for successful landing - very lenient conditions
+    #         if speed < 5.0 and  upright_score > 0.8 and  horizontal_distance < self.landing_zone_radius :  # Bigger landing zone
+                
+    #             # Additional check: if very close to ground and reasonable conditions
+    #             if altitude <= 5.0 and speed < 5.0:
+    #                 terminated = True
+    #                 landed=True
+    #                 print("🚀 SUCCESSFUL LANDING!")
+    #                 return terminated, truncated ,landed
+            
+    #         # Only crash if conditions are really bad
+    #         if altitude <= 0.5:  # Only check crashes when very close to ground
+    #             if speed > 12.0:  # Much higher crash speed threshold
+    #                 print("💥 CRASHED - Extremely fast impact!")
+    #                 terminated = True
+    #                 return terminated, truncated,landed
+                
+    #             elif upright_score < 0.1:  # Only crash if completely upside down
+    #                 print("💥 CRASHED - Completely inverted!")
+    #                 terminated = True
+    #                 return terminated, truncated,landed
+        
+    #     # Very lenient out of bounds
+    #     if horizontal_distance > 20.0:  # Much larger bounds
+    #         print("🚫 OUT OF BOUNDS - Too far horizontally!")
+    #         terminated = True
+            
+    #     elif altitude > 75.0:  # Much higher bounds
+    #         print("🚫 OUT OF BOUNDS - Too high!")
+    #         terminated = True
+            
+    #     elif altitude < -5.0:  # More tolerance for being underground
+    #         print("🚫 OUT OF BOUNDS - Deep underground!")
+    #         terminated = True
+        
+    #     # Time limit
+    #     if self.step_count >= self.max_steps:
+    #         print("⏰ TIME LIMIT REACHED!")
+    #         truncated = True
+        
+    #     # Only terminate on fuel depletion if really high up
+    #     if self.fuel_remaining <= 0 and altitude > 10.0:
+    #         print("⛽ OUT OF FUEL!")
+    #         terminated = True
+        
+    #     return terminated, truncated ,landed   
+
+# Less lenient
+
+
     def _check_termination(self, obs):
-        """Check if episode should terminate"""
+        """
+        Check if the episode should terminate with stricter conditions.
+        """
         pos = obs[0:3]
         vel = obs[3:6]
         quat = obs[6:10]
@@ -432,72 +652,58 @@ class Falcon9LandingEnv(gym.Env):
         speed = np.linalg.norm(vel)
         horizontal_distance = np.sqrt((pos[0] - self.target_x)**2 + (pos[1] - self.target_y)**2)
         
-        # Get upright score - Check if rocket exists first
-        if self.rocket is None:
-            return False, True  # Truncated if no rocket
-        
+        # Calculate upright score from quaternion
         try:
-            # More robust quaternion handling
             rotation_matrix = np.array(p.getMatrixFromQuaternion(quat)).reshape(3, 3)
-            upright_score = rotation_matrix[2, 2]  # Correct indexing for z-component
-        except Exception as e:
-            print(f"Error calculating upright score: {e}")
+            # The z-component of the rocket's local z-axis (up vector)
+            upright_score = rotation_matrix[2, 2] 
+        except Exception:
+            # Handle cases with invalid quaternions if they occur
             upright_score = 0.0
-        
+            
         terminated = False
         truncated = False
-        
-        # Debug prints (you can remove these later)
+        landed = False
         print(f"Alt: {altitude:.2f}, Speed: {speed:.2f}, H_Dist: {horizontal_distance:.2f}, Upright: {upright_score:.2f}")
-        
-        # Successful landing conditions
-        if altitude <= 0.5:  # On or very close to ground
-            if (speed < 5.0 and upright_score > 0.6 and horizontal_distance < self.landing_zone_radius):
+
+        # 1. Check for successful landing (requires being very close to the ground)
+        if altitude <= 0.5:
+            is_on_target = horizontal_distance < self.landing_zone_radius
+            is_slow_enough = speed < 5  # Stricter speed requirement
+            is_upright = upright_score > 0.95 # Stricter upright requirement (less than ~18 deg tilt)
+
+            if is_on_target and is_slow_enough and is_upright:
                 terminated = True
+                landed = True
                 print("🚀 SUCCESSFUL LANDING!")
-                return terminated, truncated
-            
-            # Crash conditions - if on ground but conditions not met
-            elif speed > 3.0:  # More lenient speed threshold
-                print("💥 CRASHED - Too fast!")
+                return terminated, truncated, landed
+            else:
+                # 2. If close to the ground but conditions aren't met, it's a crash
                 terminated = True
-                return terminated, truncated
-            
-            elif upright_score < 0.3:  # More lenient upright threshold
-                print("💥 CRASHED - Tipped over!")
-                terminated = True
-                return terminated, truncated
-                
-            elif horizontal_distance > self.landing_zone_radius * 2:  # More lenient distance
-                print("💥 CRASHED - Missed landing zone!")
-                terminated = True
-                return terminated, truncated
-        
-        # Out of bounds - More reasonable bounds
-        if horizontal_distance > 100.0:
-            print("🚫 OUT OF BOUNDS - Too far horizontally!")
+                landed = False
+                print(f"💥 CRASHED! [Speed: {speed:.2f}, Upright: {upright_score:.2f}, Dist: {horizontal_distance:.2f}]")
+                return terminated, truncated, landed
+
+        # 3. Check for out-of-bounds conditions
+        if horizontal_distance > 50.0 or altitude > 50.0 or altitude < -2.0:
+            print("🚫 OUT OF BOUNDS!")
             terminated = True
+            return terminated, truncated, landed
             
-        elif altitude > 100.0:
-            print("🚫 OUT OF BOUNDS - Too high!")
-            terminated = True
-            
-        elif altitude < -2.0:  # Below ground by significant margin
-            print("🚫 OUT OF BOUNDS - Underground!")
-            terminated = True
-        
-        # Time limit
+        # 4. Check for time limit
         if self.step_count >= self.max_steps:
             print("⏰ TIME LIMIT REACHED!")
             truncated = True
-        
-        # Fuel depletion check
-        if self.fuel_remaining <= 0 and altitude > 2.0:
+            return terminated, truncated, landed
+            
+        # 5. Check for fuel depletion (if not already on the ground)
+        if self.fuel_remaining <= 0 and altitude > 1.0:
             print("⛽ OUT OF FUEL!")
             terminated = True
-        
-        return terminated, truncated
-
+            return terminated, truncated, landed
+            
+        return terminated, truncated, landed
+    
     def render(self):
         """Render the environment"""
         if self.render_mode == "human":
