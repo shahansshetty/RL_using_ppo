@@ -55,10 +55,10 @@ class Falcon9LandingEnv(gym.Env):
         )
         
         # Physics parameters
-        self.max_main_thrust = 30000.0  # Newtons
-        self.max_rcs_thrust = 5000.0    # Newtons
-        self.rocket_mass = 2000.0       # kg
-        self.initial_fuel = 1000.0      # kg
+        self.max_main_thrust = 50000.0  # Newtons
+        self.max_rcs_thrust = 7000.0    # Newtons
+        self.rocket_mass = 8000.0       # kg
+        self.initial_fuel = 500.0      # kg
         self.fuel_consumption_rate = 0.5  # kg per second at max thrust
         
         # Environment state
@@ -158,7 +158,7 @@ class Falcon9LandingEnv(gym.Env):
             self.client = p.connect(p.GUI)
             # Set up nice camera view
             p.resetDebugVisualizerCamera(
-                cameraDistance=25,
+                cameraDistance=60,
                 cameraYaw=45,
                 cameraPitch=-30,
                 cameraTargetPosition=[0, 0, 10]
@@ -199,7 +199,7 @@ class Falcon9LandingEnv(gym.Env):
         # Random starting position (higher altitude, some horizontal offset)
         start_x = np.random.uniform(-5.0, 5.0)
         start_y = np.random.uniform(-5.0, 5.0)
-        start_z = np.random.uniform(15.0, 25.0)
+        start_z = np.random.uniform(40.0, 50.0)
         
         # Random starting orientation (small perturbations)
         roll = np.random.uniform(-0.2, 0.2)
@@ -234,7 +234,7 @@ class Falcon9LandingEnv(gym.Env):
         observation = self._get_observation()
         info = self._get_info()
         
-        return observation, info
+        return observation,info
 
     def _get_observation(self):
         """Get current observation of the rocket state"""
@@ -269,7 +269,7 @@ class Falcon9LandingEnv(gym.Env):
         euler = p.getEulerFromQuaternion(orientation)
         
         return {
-            "distance_to_target": {distance_to_target},
+            "distance_to_target": distance_to_target,
             "altitude": position[2],
             "speed": np.linalg.norm(velocity),
             "fuel_remaining": self.fuel_remaining,
@@ -440,7 +440,7 @@ class Falcon9LandingEnv(gym.Env):
         
         if self.render_mode == "human":
             time.sleep(1.0/60.0)  # Keep real-time rendering
-        
+        print(f'reward : {reward}, terminated : {terminated}')
         # FIX: Return only 5 values as per gymnasium standard
         return observation, reward, terminated, truncated, info
 
@@ -466,7 +466,7 @@ class Falcon9LandingEnv(gym.Env):
         reward -= horizontal_distance * 0.5  # Penalize distance from target
         reward -= speed * 0.1                # Penalize high speed
         reward -= angular_speed * 0.2        # Penalize spinning
-        reward += upright_score * 0.2        # Reward being upright
+        reward += upright_score * 2        # Reward being upright
         
         # Reward for getting closer (potential-based reward)
         # You could store previous distance to calculate this, but for simplicity we'll keep it direct
@@ -667,7 +667,7 @@ class Falcon9LandingEnv(gym.Env):
         print(f"Alt: {altitude:.2f}, Speed: {speed:.2f}, H_Dist: {horizontal_distance:.2f}, Upright: {upright_score:.2f}")
 
         # 1. Check for successful landing (requires being very close to the ground)
-        if altitude <= 0.5:
+        if altitude <= 2.5:
             is_on_target = horizontal_distance < self.landing_zone_radius
             is_slow_enough = speed < 5  # Stricter speed requirement
             is_upright = upright_score > 0.95 # Stricter upright requirement (less than ~18 deg tilt)
@@ -685,7 +685,7 @@ class Falcon9LandingEnv(gym.Env):
                 return terminated, truncated, landed
 
         # 3. Check for out-of-bounds conditions
-        if horizontal_distance > 50.0 or altitude > 50.0 or altitude < -2.0:
+        if horizontal_distance > 60.0 or altitude > 60.0 or altitude < -2.0:
             print("🚫 OUT OF BOUNDS!")
             terminated = True
             return terminated, truncated, landed
