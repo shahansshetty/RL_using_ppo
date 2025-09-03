@@ -55,11 +55,11 @@ class Falcon9LandingEnv(gym.Env):
         )
         
         # Physics parameters
-        self.max_main_thrust = 50000.0  # Newtons
-        self.max_rcs_thrust = 7000.0    # Newtons
-        self.rocket_mass = 8000.0       # kg
-        self.initial_fuel = 500.0      # kg
-        self.fuel_consumption_rate = 0.5  # kg per second at max thrust
+        self.max_main_thrust = 7500.0  # Newtons
+        self.max_rcs_thrust = 100.0    # Newtons
+        self.rocket_mass = 150.0      # kg
+        self.initial_fuel = 100.0      # kg
+        self.fuel_consumption_rate = 3  # kg per second at max thrust
         
         # Environment state
         self.client = None
@@ -157,12 +157,12 @@ class Falcon9LandingEnv(gym.Env):
         if self.render_mode == "human":
             self.client = p.connect(p.GUI)
             # Set up nice camera view
-            p.resetDebugVisualizerCamera(
-                cameraDistance=60,
-                cameraYaw=45,
-                cameraPitch=-30,
-                cameraTargetPosition=[0, 0, 10]
-            )
+            # p.resetDebugVisualizerCamera(
+            #     cameraDistance=60,
+            #     cameraYaw=45,
+            #     cameraPitch=-30,
+            #     cameraTargetPosition=[0, 0, 10]
+            # )
         else:
             self.client = p.connect(p.DIRECT)
             
@@ -199,7 +199,7 @@ class Falcon9LandingEnv(gym.Env):
         # Random starting position (higher altitude, some horizontal offset)
         start_x = np.random.uniform(-5.0, 5.0)
         start_y = np.random.uniform(-5.0, 5.0)
-        start_z = np.random.uniform(40.0, 50.0)
+        start_z = np.random.uniform(59.0, 69.0)
         
         # Random starting orientation (small perturbations)
         roll = np.random.uniform(-0.2, 0.2)
@@ -374,6 +374,25 @@ class Falcon9LandingEnv(gym.Env):
     
     def step(self, action):
         """Execute one time step in the environment"""
+        if self.render_mode == "human":
+            r_position, _ = p.getBasePositionAndOrientation(self.rocket)
+            if r_position[2]<30:
+                p.resetDebugVisualizerCamera(
+                    cameraDistance=25,
+                    cameraYaw=45,
+                    cameraPitch=-30,
+                    cameraTargetPosition=[0, 0, 10]
+                )
+
+            else:
+              p.resetDebugVisualizerCamera(
+              cameraDistance=15,          
+              cameraYaw=50,              
+              cameraPitch=-35,           
+              cameraTargetPosition=r_position
+             )
+          
+
         action = np.clip(action, self.action_space.low, self.action_space.high)
        
         main_thrust = action[0]
@@ -685,7 +704,7 @@ class Falcon9LandingEnv(gym.Env):
                 return terminated, truncated, landed
 
         # 3. Check for out-of-bounds conditions
-        if horizontal_distance > 60.0 or altitude > 60.0 or altitude < -2.0:
+        if horizontal_distance > 70.0 or altitude > 70.0 or altitude < -2.0:
             print("🚫 OUT OF BOUNDS!")
             terminated = True
             return terminated, truncated, landed
