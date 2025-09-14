@@ -55,11 +55,11 @@ class Falcon9LandingEnv(gym.Env):
         )
         
         # Physics parameters
-        self.max_main_thrust = 7500.0  # Newtons
-        self.max_rcs_thrust = 100.0    # Newtons
-        self.rocket_mass = 150.0      # kg
-        self.initial_fuel = 100.0      # kg
-        self.fuel_consumption_rate = 3  # kg per second at max thrust
+        self.max_main_thrust = 30000.0  # Newtons
+        self.max_rcs_thrust = 500.0    # Newtons
+        self.rocket_mass = 1500.0      # kg
+        self.initial_fuel = 1000.0      # kg
+        self.fuel_consumption_rate = 5  # kg per second at max thrust
         
         # Environment state
         self.client = None
@@ -73,7 +73,11 @@ class Falcon9LandingEnv(gym.Env):
         # Target landing zone
         self.target_x = 0.0
         self.target_y = 0.0
-        self.landing_zone_radius = 10.0  # meters
+        self.landing_zone_radius = 7.0  # meters
+        self.previous_distance = None
+        self.previous_altitude = None
+        self.landing_attempts = 0
+        self.best_landing_distance = float('inf')
         
         # Set paths to your URDF files
         self._setup_urdf_paths(rocket_urdf_path, landing_pad_urdf_path)
@@ -185,6 +189,7 @@ class Falcon9LandingEnv(gym.Env):
         # Load ground plane
         self.ground = p.loadURDF("plane.urdf")
         
+        
         # Load landing pad
         self.landing_pad = p.loadURDF(
             self.pad_urdf_path,
@@ -226,6 +231,9 @@ class Falcon9LandingEnv(gym.Env):
         # Reset environment state
         self.step_count = 0
         self.fuel_remaining = self.initial_fuel
+        self.previous_distance = None
+        self.previous_altitude = None
+        self.landing_attempts += 1
         
         # Set material properties for more realistic physics
         p.changeDynamics(self.rocket, -1, restitution=0.1, lateralFriction=0.8)
@@ -376,7 +384,7 @@ class Falcon9LandingEnv(gym.Env):
         """Execute one time step in the environment"""
         if self.render_mode == "human":
             r_position, _ = p.getBasePositionAndOrientation(self.rocket)
-            if r_position[2]<30:
+            if r_position[2]<35:
                 p.resetDebugVisualizerCamera(
                     cameraDistance=25,
                     cameraYaw=45,
@@ -388,7 +396,7 @@ class Falcon9LandingEnv(gym.Env):
               p.resetDebugVisualizerCamera(
               cameraDistance=15,          
               cameraYaw=50,              
-              cameraPitch=-35,           
+              cameraPitch=-40,           
               cameraTargetPosition=r_position
              )
           
@@ -464,32 +472,149 @@ class Falcon9LandingEnv(gym.Env):
         return observation, reward, terminated, truncated, info
 
     def _calculate_reward(self, obs, landed, terminated):
-        """Calculate reward based on current state"""
-        if landed:
-            return 100.0 # Large bonus for successful landing
-        if terminated and not landed:
-            return -100.0 # Large penalty for crashing
+        """Improved reward function for better PPO performance"""
 
-        pos, vel, quat, ang_vel, _ = obs[0:3], obs[3:6], obs[6:10], obs[10:13], obs[13]
-        
+        # Parse observation
+        pos = obs[0:3]
+        vel = obs[3:6] 
+        quat = obs[6:10]
+        ang_vel = obs[10:13]
+        fuel_fraction = obs[13]
+
+        # Calculate key metrics
         horizontal_distance = np.sqrt((pos[0] - self.target_x)**2 + (pos[1] - self.target_y)**2)
         altitude = pos[2]
         speed = np.linalg.norm(vel)
+        vertical_speed = abs(vel[2])
+        horizontal_speed = np.sqrt(vel[0]**2 + vel[1]**2)
         angular_speed = np.linalg.norm(ang_vel)
-        
+
+        # Calculate upright score
         rotation_matrix = np.array(p.getMatrixFromQuaternion(quat)).reshape(3, 3)
-        upright_score = rotation_matrix[2, 2]
-        
-        # Reward shaping
+        upright_score = rotation_matrix[2, 2]  # 1.0 = perfectly upright
+
+        # Initialize reward
         reward = 0.0
-        reward -= horizontal_distance * 0.5  # Penalize distance from target
-        reward -= speed * 0.1                # Penalize high speed
-        reward -= angular_speed * 0.2        # Penalize spinning
-        reward += upright_score * 2        # Reward being upright
-        
-        # Reward for getting closer (potential-based reward)
-        # You could store previous distance to calculate this, but for simplicity we'll keep it direct
-        reward -= altitude * 0.1 # Encourage descent
+
+        # 1. TERMINAL REWARDS (large, sparse)
+        if landed:
+            # Graduated landing bonus based on precision
+            landing_bonus = 1000.0
+            if horizontal_distance < 1.0:
+                landing_bonus += 500.0  # Perfect landing
+            elif horizontal_distance < 2.5:
+                landing_bonus += 250.0  # Good landing
+            elif horizontal_distance < self.landing_zone_radius:
+                landing_bonus += 100.0  # Acceptable landing
+
+            # Speed bonus for gentle landing
+            if speed < 1.0:
+                landing_bonus += 200.0
+            elif speed < 2.0:
+                landing_bonus += 100.0
+
+            # Upright bonus
+            if upright_score > 0.95:
+                landing_bonus += 150.0
+
+            # Fuel efficiency bonus
+            landing_bonus += fuel_fraction * 100.0
+
+            # Track best performance
+            if horizontal_distance < self.best_landing_distance:
+                self.best_landing_distance = horizontal_distance
+                landing_bonus += 200.0  # Bonus for personal best
+
+            return landing_bonus
+
+        if terminated and not landed:
+            # Graduated crash penalty (less harsh than your -100)
+            crash_penalty = -200.0
+
+            # Less penalty if close to target when crashed
+            if horizontal_distance < self.landing_zone_radius:
+                crash_penalty = -200.0
+            if horizontal_distance < 2.5:
+                crash_penalty = -150.0
+
+            return crash_penalty
+
+        # 2. PROGRESS REWARDS (dense shaping)
+
+        # Distance progress reward (encourage moving toward target)
+        if self.previous_distance is not None:
+            distance_progress = self.previous_distance - horizontal_distance
+            reward += distance_progress * 5.0  # Reward getting closer
+        self.previous_distance = horizontal_distance
+
+        # Altitude progress reward (encourage controlled descent)
+        if self.previous_altitude is not None and altitude > 0:
+            altitude_progress = self.previous_altitude - altitude
+            # Only reward descent when above target, penalize when below and moving away
+            if altitude > 1.0:
+                reward += altitude_progress * 2.0
+            elif altitude < 1.0 and altitude_progress < 0:  # Moving up when should be landing
+                reward -= 5.0
+        self.previous_altitude = altitude
+
+        # 3. STATE-BASED REWARDS (continuous shaping)
+
+        # Proximity reward (exponentially increasing as you get closer)
+        max_distance = 50.0  # Maximum expected distance
+        proximity_reward = 10.0 * (1.0 - min(horizontal_distance / max_distance, 1.0))**2
+        reward += proximity_reward
+
+        # Altitude-dependent rewards
+        if altitude < 5.0:
+            # Close to landing - emphasize precision and control
+            reward += upright_score * 15.0  # Strong upright bonus when landing
+            reward -= vertical_speed * 8.0  # Penalize fast descent
+            reward -= horizontal_speed * 10.0  # Penalize horizontal drift
+            reward -= angular_speed * 15.0  # Penalize spinning near ground
+
+            # Landing zone bonus when close to ground
+            if horizontal_distance < self.landing_zone_radius:
+                reward += 20.0
+
+        elif altitude < 15.0:
+            # Mid-altitude - encourage stable descent
+            reward += upright_score * 8.0
+            reward -= vertical_speed * 3.0 if vertical_speed > 3.0 else 0  # Only penalize if too fast
+            reward -= horizontal_speed * 2.0
+            reward -= angular_speed * 5.0
+
+        else:
+            # High altitude - encourage general orientation and approach
+            reward += upright_score * 3.0
+            reward -= angular_speed * 2.0
+            # Small penalty for being too high (encourage descent)
+            reward -= (altitude - 15.0) * 0.1
+
+        # 4. FUEL EFFICIENCY
+        # Reward fuel conservation, but don't penalize use when necessary
+        if fuel_fraction > 0.8:
+            reward += 2.0  # Bonus for high fuel
+        elif fuel_fraction < 0.1:
+            reward -= 5.0  # Penalty for very low fuel
+
+        # 5. STABILITY REWARDS
+        # Reward low angular velocity (stable flight)
+        if angular_speed < 0.1:
+            reward += 3.0
+        elif angular_speed > 2.0:
+            reward -= angular_speed * 3.0
+
+        # 6. BEHAVIORAL SHAPING
+        # Small time penalty to encourage efficiency (but not too harsh)
+        reward -= 0.05
+
+        # Encourage being in landing zone even at altitude
+        if horizontal_distance < self.landing_zone_radius * 2.0:
+            reward += 2.0
+
+        # Bonus for maintaining good approach angle
+        if altitude > 2.0 and upright_score > 0.8 and horizontal_distance < 10.0:
+            reward += 5.0  # Good approach bonus
 
         return reward
 
@@ -688,8 +813,8 @@ class Falcon9LandingEnv(gym.Env):
         # 1. Check for successful landing (requires being very close to the ground)
         if altitude <= 2.5:
             is_on_target = horizontal_distance < self.landing_zone_radius
-            is_slow_enough = speed < 5  # Stricter speed requirement
-            is_upright = upright_score > 0.95 # Stricter upright requirement (less than ~18 deg tilt)
+            is_slow_enough = speed < 0.5  # Stricter speed requirement
+            is_upright = upright_score > 0.98 # Stricter upright requirement (less than ~18 deg tilt)
 
             if is_on_target and is_slow_enough and is_upright:
                 terminated = True
