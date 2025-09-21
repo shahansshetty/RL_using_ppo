@@ -5,8 +5,6 @@ import gymnasium as gym
 from gymnasium import spaces
 import pybullet as p
 import pybullet_data
-import tempfile
-import textwrap
 
 class Falcon9LandingEnv(gym.Env):
     """
@@ -14,9 +12,10 @@ class Falcon9LandingEnv(gym.Env):
     
     Action Space:
         - main_thrust: [0, 1] - Main engine throttle (0 = off, 1 = max thrust)
-        - rcs_x: [-1, 1] - RCS thruster for roll control
-        - rcs_y: [-1, 1] - RCS thruster for pitch control  
-        - rcs_z: [-1, 1] - RCS thruster for yaw control
+        - thruster_north: [0, 1] - North thruster (front of rocket)
+        - thruster_east: [0, 1] - East thruster (right side of rocket)
+        - thruster_south: [0, 1] - South thruster (back of rocket)  
+        - thruster_west: [0, 1] - West thruster (left side of rocket)
         
     Observation Space:
         - position: [x, y, z] - Rocket position in meters
@@ -28,26 +27,19 @@ class Falcon9LandingEnv(gym.Env):
     
     metadata = {
         "render_modes": ["human", "rgb_array"],
-        "render_fps": 60,
+        "render_fps": 50,
     }
 
     def __init__(self, render_mode="human", rocket_urdf_path=r"C:\Users\Lenovo\Desktop\falcon9_project\assets\rocket.urdf", landing_pad_urdf_path=r"C:\Users\Lenovo\Desktop\falcon9_project\assets\landing_pad.urdf"):
         super().__init__()
         self.render_mode = render_mode
         
-        # Action space: [main_thrust, rcs_x, rcs_y, rcs_z]
+        # Action space: [main_thrust, thruster_north, thruster_east, thruster_south, thruster_west]
         self.action_space = spaces.Box(
-            low=np.array([0.0, -1.0, -1.0, -1.0], dtype=np.float32),
-            high=np.array([1.0, 1.0, 1.0, 1.0], dtype=np.float32),
+            low=np.array([0.0, 0.0, 0.0, 0.0, 0.0], dtype=np.float32),
+            high=np.array([1.0, 1.0, 1.0, 1.0, 1.0], dtype=np.float32),
             dtype=np.float32
         )
-
-    #     #corrected
-    #     self.action_space = spaces.Box(
-    # low=np.array([-1.0] * 15, dtype=np.float32),  # 4 thrusters * (3 directions + 1 magnitude)
-    # high=np.array([1.0] * 15, dtype=np.float32),
-    # dtype=np.float32)
-
         
         # Observation space: pos(3) + vel(3) + quat(4) + angvel(3) + fuel(1) = 14 dims
         self.observation_space = spaces.Box(
@@ -55,8 +47,8 @@ class Falcon9LandingEnv(gym.Env):
         )
         
         # Physics parameters
-        self.max_main_thrust = 30000.0  # Newtons
-        self.max_rcs_thrust = 500.0    # Newtons
+        self.max_main_thrust = 100000.0  # Newtons
+        self.max_thruster_force = 5000.0  # Newtons per individual thruster
         self.rocket_mass = 1500.0      # kg
         self.initial_fuel = 1000.0      # kg
         self.fuel_consumption_rate = 5  # kg per second at max thrust
@@ -78,6 +70,14 @@ class Falcon9LandingEnv(gym.Env):
         self.previous_altitude = None
         self.landing_attempts = 0
         self.best_landing_distance = float('inf')
+        
+        # Thruster positions (near top of rocket in local coordinates)
+        self.thruster_positions = {
+            'north': [0, 2.5, 2.0],   # Front (positive Y)
+            'east':  [2.5, 0, 2.0],   # Right (positive X)
+            'south': [0, -2.5, 2.0],  # Back (negative Y)
+            'west':  [-2.5, 0, 2.0]   # Left (negative X)
+        }
         
         # Set paths to your URDF files
         self._setup_urdf_paths(rocket_urdf_path, landing_pad_urdf_path)
@@ -160,13 +160,6 @@ class Falcon9LandingEnv(gym.Env):
             return
         if self.render_mode == "human":
             self.client = p.connect(p.GUI)
-            # Set up nice camera view
-            # p.resetDebugVisualizerCamera(
-            #     cameraDistance=60,
-            #     cameraYaw=45,
-            #     cameraPitch=-30,
-            #     cameraTargetPosition=[0, 0, 10]
-            # )
         else:
             self.client = p.connect(p.DIRECT)
             
@@ -189,7 +182,6 @@ class Falcon9LandingEnv(gym.Env):
         # Load ground plane
         self.ground = p.loadURDF("plane.urdf")
         
-        
         # Load landing pad
         self.landing_pad = p.loadURDF(
             self.pad_urdf_path,
@@ -207,8 +199,8 @@ class Falcon9LandingEnv(gym.Env):
         start_z = np.random.uniform(59.0, 69.0)
         
         # Random starting orientation (small perturbations)
-        roll = np.random.uniform(-0.2, 0.2)
-        pitch = np.random.uniform(-0.2, 0.2) 
+        roll = np.random.uniform(-0.5, 0.5)
+        pitch = np.random.uniform(-0.5, 0.5) 
         yaw = np.random.uniform(-np.pi, np.pi)
         
         start_orientation = p.getQuaternionFromEuler([roll, pitch, yaw])
@@ -236,19 +228,18 @@ class Falcon9LandingEnv(gym.Env):
         self.landing_attempts += 1
         
         # Set material properties for more realistic physics
-        p.changeDynamics(self.rocket, -1, restitution=0.1, lateralFriction=0.8)
+        p.changeDynamics(self.rocket, -1, linearDamping=0.02)
         p.changeDynamics(self.landing_pad, -1, restitution=0.3, lateralFriction=1.0)
         
         observation = self._get_observation()
         info = self._get_info()
         
-        return observation,info
+        return observation, info
 
     def _get_observation(self):
         """Get current observation of the rocket state"""
         position, orientation = p.getBasePositionAndOrientation(self.rocket)
         velocity, angular_velocity = p.getBaseVelocity(self.rocket)
-        # print(position,orientation)
         
         # Normalize fuel remaining
         fuel_fraction = self.fuel_remaining / self.initial_fuel
@@ -335,81 +326,85 @@ class Falcon9LandingEnv(gym.Env):
                 lifeTime=0.05  # Short life for flickering effect
             )
     
-    def _create_rcs_particles(self, position, orientation, rcs_x, rcs_y, rcs_z):
-        """Create particle effects for RCS thrusters"""
+    def _create_thruster_particles(self, position, orientation, thruster_forces):
+        """Create particle effects for individual thrusters"""
         
         rotation_matrix = np.array(p.getMatrixFromQuaternion(orientation)).reshape(3, 3)
         
-        # RCS thruster positions around the rocket (simplified - 4 positions)
-        rcs_positions = [
-            [2.0, 0, 1.25],    # Right side
-            [-2.0, 0, 1.25],   # Left side  
-            [0, 2.0, 1.25],    # Front
-            [0, -2.0, 1.25]    # Back
-        ]
+        # Thruster names and their corresponding forces
+        thruster_names = ['north', 'east', 'south', 'west']
         
-        # RCS firing intensity
-        rcs_intensities = [abs(rcs_x), abs(rcs_x), abs(rcs_y), abs(rcs_y)]
-        
-        for i, (local_pos, intensity) in enumerate(zip(rcs_positions, rcs_intensities)):
-            if intensity > 0.1:  # Only show particles if thruster is firing
+        for i, (thruster_name, force) in enumerate(zip(thruster_names, thruster_forces)):
+            if force > 0.05:  # Only show particles if thruster is firing significantly
                 
-                # Transform to world coordinates
+                # Get thruster position in world coordinates
+                local_pos = self.thruster_positions[thruster_name]
                 world_pos = position + rotation_matrix @ local_pos
                 
-                # RCS exhaust direction (perpendicular to rocket)
-                if i < 2:  # Side thrusters (roll control)
-                    exhaust_dir = rotation_matrix[:, 0] * (1 if i == 0 else -1)  # X-axis
-                else:  # Front/back thrusters (pitch control)
-                    exhaust_dir = rotation_matrix[:, 1] * (1 if i == 2 else -1)  # Y-axis
+                # Determine exhaust direction based on thruster position
+                # Thrusters push outward from rocket center
+                if thruster_name == 'north':   # Front thruster pushes forward
+                    exhaust_dir = rotation_matrix[:, 1]  # +Y direction
+                elif thruster_name == 'south': # Back thruster pushes backward
+                    exhaust_dir = -rotation_matrix[:, 1]  # -Y direction
+                elif thruster_name == 'east':  # Right thruster pushes right
+                    exhaust_dir = rotation_matrix[:, 0]  # +X direction
+                elif thruster_name == 'west':  # Left thruster pushes left
+                    exhaust_dir = -rotation_matrix[:, 0]  # -X direction
                 
-                # Create small RCS exhaust plume
-                num_rcs_particles = int(intensity * 5)
-                for j in range(num_rcs_particles):
-                    particle_start = world_pos + np.random.uniform(-0.2, 0.2, 3)
-                    particle_end = particle_start + exhaust_dir * (0.5 + intensity * 1.0)
+                # Create thruster exhaust particles
+                num_particles = int(force * 3)  # Number based on thrust intensity
+                
+                for j in range(num_particles):
+                    # Small random offset around thruster position
+                    particle_start = world_pos + np.random.uniform(-0.1, 0.1, 3)
                     
-                    # White/blue RCS exhaust
-                    color = [0.8, 0.9, 1.0]
+                    # Exhaust length based on force
+                    exhaust_length = 0.5 + force * 1.5
+                    particle_end = particle_start + exhaust_dir * exhaust_length
+                    
+                    # Thruster color (white/blue for cold gas thrusters)
+                    color = [0.7, 0.8, 1.0]  # Light blue
                     
                     p.addUserDebugLine(
                         particle_start,
                         particle_end,
                         lineColorRGB=color,
-                        lineWidth=1.0,
-                        lifeTime=0.03
+                        lineWidth=1.5,
+                        lifeTime=0.04  # Short life for realistic effect
                     )
-    
+
     def step(self, action):
         """Execute one time step in the environment"""
         if self.render_mode == "human":
             r_position, _ = p.getBasePositionAndOrientation(self.rocket)
-            if r_position[2]<35:
+            if r_position[2] < 35:
                 p.resetDebugVisualizerCamera(
                     cameraDistance=25,
                     cameraYaw=45,
                     cameraPitch=-30,
                     cameraTargetPosition=[0, 0, 10]
                 )
-
             else:
-              p.resetDebugVisualizerCamera(
-              cameraDistance=15,          
-              cameraYaw=50,              
-              cameraPitch=-40,           
-              cameraTargetPosition=r_position
-             )
-          
+                p.resetDebugVisualizerCamera(
+                    cameraDistance=15,          
+                    cameraYaw=50,              
+                    cameraPitch=-40,           
+                    cameraTargetPosition=r_position
+                )
 
         action = np.clip(action, self.action_space.low, self.action_space.high)
        
         main_thrust = action[0]
-        rcs_x, rcs_y, rcs_z = action[1], action[2], action[3]
+        thruster_north = action[1]
+        thruster_east = action[2]
+        thruster_south = action[3]
+        thruster_west = action[4]
         
         # Check if we have fuel
         if self.fuel_remaining <= 0:
             main_thrust = 0.0
-            rcs_x = rcs_y = rcs_z = 0.0
+            thruster_north = thruster_east = thruster_south = thruster_west = 0.0
         
         # Apply main engine thrust
         if main_thrust > 0.01:  # Threshold to avoid tiny thrusts
@@ -428,7 +423,7 @@ class Falcon9LandingEnv(gym.Env):
                 self.rocket, -1, thrust_vector, thrust_point, p.LINK_FRAME
             )
             
-            # ADD MAIN ENGINE PARTICLE EFFECTS
+            # Add main engine particle effects
             if self.render_mode == "human":
                 self._create_engine_particles(position, orientation, main_thrust)
             
@@ -436,19 +431,46 @@ class Falcon9LandingEnv(gym.Env):
             fuel_used = main_thrust * self.fuel_consumption_rate * (1.0/60.0)  # Per frame
             self.fuel_remaining = max(0, self.fuel_remaining - fuel_used)
     
-        # Apply RCS thrusters for attitude control
-        rcs_torque_strength = self.max_rcs_thrust * 0.01  # Convert to torque scale
-        torque = [
-            rcs_x * rcs_torque_strength,  # Roll
-            rcs_y * rcs_torque_strength,  # Pitch
-            rcs_z * rcs_torque_strength   # Yaw
-        ]
-        p.applyExternalTorque(self.rocket, -1, torque, p.LINK_FRAME)
+        # Apply individual thrusters
+        position, orientation = p.getBasePositionAndOrientation(self.rocket)
+        rotation_matrix = np.array(p.getMatrixFromQuaternion(orientation)).reshape(3, 3)
         
-        # ADD RCS PARTICLE EFFECTS
-        if self.render_mode == "human" and (abs(rcs_x) > 0.1 or abs(rcs_y) > 0.1 or abs(rcs_z) > 0.1):
-            position, orientation = p.getBasePositionAndOrientation(self.rocket)
-            self._create_rcs_particles(position, orientation, rcs_x, rcs_y, rcs_z)
+        thruster_forces = [thruster_north, thruster_east, thruster_south, thruster_west]
+        thruster_names = ['north', 'east', 'south', 'west']
+        
+        for i, (thruster_name, thrust_level) in enumerate(zip(thruster_names, thruster_forces)):
+            if thrust_level > 0.01:
+                
+                # Calculate force magnitude
+                force_magnitude = thrust_level * self.max_thruster_force
+                
+                # Get thruster position in world coordinates
+                local_pos = self.thruster_positions[thruster_name]
+                thruster_world_pos = position + rotation_matrix @ local_pos
+                
+                # Determine force direction (opposite to exhaust direction)
+                if thruster_name == 'north':   # North thruster pushes rocket south
+                    force_direction = -rotation_matrix[:, 1]  # -Y direction
+                elif thruster_name == 'south': # South thruster pushes rocket north
+                    force_direction = rotation_matrix[:, 1]   # +Y direction
+                elif thruster_name == 'east':  # East thruster pushes rocket west
+                    force_direction = -rotation_matrix[:, 0]  # -X direction
+                elif thruster_name == 'west':  # West thruster pushes rocket east
+                    force_direction = rotation_matrix[:, 0]   # +X direction
+                
+                # Apply force at thruster location
+                force_vector = force_direction * force_magnitude
+                p.applyExternalForce(
+                    self.rocket, -1, force_vector, local_pos, p.LINK_FRAME
+                )
+                
+                # Small fuel consumption for thrusters
+                fuel_used = thrust_level * 0.2 * (1.0/60.0)  # Less fuel than main engine
+                self.fuel_remaining = max(0, self.fuel_remaining - fuel_used)
+        
+        # Add thruster particle effects
+        if self.render_mode == "human" and any(f > 0.05 for f in thruster_forces):
+            self._create_thruster_particles(position, orientation, thruster_forces)
         
         # Step simulation multiple times for stability
         for _ in range(4):  # 4 substeps per environment step
@@ -459,7 +481,7 @@ class Falcon9LandingEnv(gym.Env):
         # Get new observation
         observation = self._get_observation()
         terminated, truncated, landed = self._check_termination(observation)
-        reward = self._calculate_reward(observation,landed,terminated)
+        reward = self._calculate_reward(observation, landed, terminated)
         info = self._get_info()
         
         # Add landing info to info dict
@@ -467,8 +489,9 @@ class Falcon9LandingEnv(gym.Env):
         
         if self.render_mode == "human":
             time.sleep(1.0/60.0)  # Keep real-time rendering
+            
         print(f'reward : {reward}, terminated : {terminated}')
-        # FIX: Return only 5 values as per gymnasium standard
+        
         return observation, reward, terminated, truncated, info
 
     def _calculate_reward(self, obs, landed, terminated):
@@ -499,11 +522,15 @@ class Falcon9LandingEnv(gym.Env):
         # 1. TERMINAL REWARDS (large, sparse)
         if landed:
             # Graduated landing bonus based on precision
-            landing_bonus = 1000.0
+            landing_bonus = 500.0
             if horizontal_distance < 1.0:
                 landing_bonus += 500.0  # Perfect landing
-            elif horizontal_distance < 2.5:
-                landing_bonus += 250.0  # Good landing
+            if horizontal_distance < 2.0:
+                landing_bonus += 400.0  # Perfect landing
+            if horizontal_distance < 3.0:
+                landing_bonus += 300.0  # Perfect landing
+            elif horizontal_distance < 4:
+                landing_bonus += 200.0  # Good landing
             elif horizontal_distance < self.landing_zone_radius:
                 landing_bonus += 100.0  # Acceptable landing
 
@@ -618,176 +645,8 @@ class Falcon9LandingEnv(gym.Env):
 
         return reward
 
-
-
-
-
-
-
-
-    # def _check_termination(self, obs):
-    #     """Check if episode should terminate"""
-    #     pos = obs[0:3]
-    #     vel = obs[3:6]
-    #     quat = obs[6:10]
-        
-    #     altitude = pos[2]
-    #     speed = np.linalg.norm(vel)
-    #     horizontal_distance = np.sqrt((pos[0] - self.target_x)**2 + (pos[1] - self.target_y)**2)
-        
-    #     # Get upright score - Check if rocket exists first
-    #     if self.rocket is None:
-    #         return False, True  # Truncated if no rocket
-        
-    #     try:
-    #         # More robust quaternion handling
-    #         rotation_matrix = np.array(p.getMatrixFromQuaternion(quat)).reshape(3, 3)
-    #         upright_score = rotation_matrix[2, 2]  # Correct indexing for z-component
-    #     except Exception as e:
-    #         print(f"Error calculating upright score: {e}")
-    #         upright_score = 0.0
-        
-    #     terminated = False
-    #     truncated = False
-        
-    #     # Debug prints (you can remove these later)
-    #     print(f"Alt: {altitude:.2f}, Speed: {speed:.2f}, H_Dist: {horizontal_distance:.2f}, Upright: {upright_score:.2f}")
-        
-    #     # Successful landing conditions
-    #     if altitude <= 1:  # On or very close to ground
-    #         if (speed < 5.0 and upright_score > 0.6 and horizontal_distance < self.landing_zone_radius):
-    #             terminated = True
-    #             print("🚀 SUCCESSFUL LANDING!")
-    #             return terminated, truncated
-            
-    #         # Crash conditions - if on ground but conditions not met
-    #         elif speed > 3.0:  # More lenient speed threshold
-    #             print("💥 CRASHED - Too fast!")
-    #             terminated = True
-    #             return terminated, truncated
-            
-    #         elif upright_score < 0.3:  # More lenient upright threshold
-    #             print("💥 CRASHED - Tipped over!")
-    #             terminated = True
-    #             return terminated, truncated
-                
-    #         elif horizontal_distance > self.landing_zone_radius * 2:  # More lenient distance
-    #             print("💥 CRASHED - Missed landing zone!")
-    #             terminated = True
-    #             return terminated, truncated
-        
-    #     # Out of bounds - More reasonable bounds
-    #     if horizontal_distance > 100.0:
-    #         print("🚫 OUT OF BOUNDS - Too far horizontally!")
-    #         terminated = True
-            
-    #     elif altitude > 100.0:
-    #         print("🚫 OUT OF BOUNDS - Too high!")
-    #         terminated = True
-            
-    #     elif altitude < -2.0:  # Below ground by significant margin
-    #         print("🚫 OUT OF BOUNDS - Underground!")
-    #         terminated = True
-        
-    #     # Time limit
-    #     if self.step_count >= self.max_steps:
-    #         print("⏰ TIME LIMIT REACHED!")
-    #         truncated = True
-        
-    #     # Fuel depletion check
-    #     if self.fuel_remaining <= 0 and altitude > 2.0:
-    #         print("⛽ OUT OF FUEL!")
-    #         terminated = True
-        
-    #     return terminated, truncated
-
-#more lenient
-
-    # def _check_termination(self, obs):
-    #     """Check if episode should terminate"""
-    #     pos = obs[0:3]
-    #     vel = obs[3:6]
-    #     quat = obs[6:10]
-        
-    #     altitude = pos[2]
-    #     speed = np.linalg.norm(vel)
-    #     horizontal_distance = np.sqrt((pos[0] - self.target_x)**2 + (pos[1] - self.target_y)**2)
-        
-    #     # Get upright score - Check if rocket exists first
-    #     if self.rocket is None:
-    #         return False, True  # Truncated if no rocket
-        
-    #     try:
-    #         # More robust quaternion handling
-    #         rotation_matrix = np.array(p.getMatrixFromQuaternion(quat)).reshape(3, 3)
-    #         upright_score = rotation_matrix[2, 2]  # Correct indexing for z-component
-    #     except Exception as e:
-    #         print(f"Error calculating upright score: {e}")
-    #         upright_score = 0.0
-        
-    #     terminated = False
-    #     truncated = False
-    #     landed=False
-        
-    #     # Debug prints (you can remove these later)
-    #     print(f"Alt: {altitude:.2f}, Speed: {speed:.2f}, H_Dist: {horizontal_distance:.2f}, Upright: {upright_score:.2f}")
-        
-    #     # MUCH MORE LENIENT LANDING CONDITIONS
-    #     if altitude <= 5.0:  # Increased altitude threshold
-    #         # Check for successful landing - very lenient conditions
-    #         if speed < 5.0 and  upright_score > 0.8 and  horizontal_distance < self.landing_zone_radius :  # Bigger landing zone
-                
-    #             # Additional check: if very close to ground and reasonable conditions
-    #             if altitude <= 5.0 and speed < 5.0:
-    #                 terminated = True
-    #                 landed=True
-    #                 print("🚀 SUCCESSFUL LANDING!")
-    #                 return terminated, truncated ,landed
-            
-    #         # Only crash if conditions are really bad
-    #         if altitude <= 0.5:  # Only check crashes when very close to ground
-    #             if speed > 12.0:  # Much higher crash speed threshold
-    #                 print("💥 CRASHED - Extremely fast impact!")
-    #                 terminated = True
-    #                 return terminated, truncated,landed
-                
-    #             elif upright_score < 0.1:  # Only crash if completely upside down
-    #                 print("💥 CRASHED - Completely inverted!")
-    #                 terminated = True
-    #                 return terminated, truncated,landed
-        
-    #     # Very lenient out of bounds
-    #     if horizontal_distance > 20.0:  # Much larger bounds
-    #         print("🚫 OUT OF BOUNDS - Too far horizontally!")
-    #         terminated = True
-            
-    #     elif altitude > 75.0:  # Much higher bounds
-    #         print("🚫 OUT OF BOUNDS - Too high!")
-    #         terminated = True
-            
-    #     elif altitude < -5.0:  # More tolerance for being underground
-    #         print("🚫 OUT OF BOUNDS - Deep underground!")
-    #         terminated = True
-        
-    #     # Time limit
-    #     if self.step_count >= self.max_steps:
-    #         print("⏰ TIME LIMIT REACHED!")
-    #         truncated = True
-        
-    #     # Only terminate on fuel depletion if really high up
-    #     if self.fuel_remaining <= 0 and altitude > 10.0:
-    #         print("⛽ OUT OF FUEL!")
-    #         terminated = True
-        
-    #     return terminated, truncated ,landed   
-
-# Less lenient
-
-
     def _check_termination(self, obs):
-        """
-        Check if the episode should terminate with stricter conditions.
-        """
+        """Check if the episode should terminate with stricter conditions."""
         pos = obs[0:3]
         vel = obs[3:6]
         quat = obs[6:10]
@@ -808,12 +667,13 @@ class Falcon9LandingEnv(gym.Env):
         terminated = False
         truncated = False
         landed = False
+        
         print(f"Alt: {altitude:.2f}, Speed: {speed:.2f}, H_Dist: {horizontal_distance:.2f}, Upright: {upright_score:.2f}")
 
         # 1. Check for successful landing (requires being very close to the ground)
         if altitude <= 2.5:
             is_on_target = horizontal_distance < self.landing_zone_radius
-            is_slow_enough = speed < 0.5  # Stricter speed requirement
+            is_slow_enough = speed < 4.5  # Stricter speed requirement
             is_upright = upright_score > 0.98 # Stricter upright requirement (less than ~18 deg tilt)
 
             if is_on_target and is_slow_enough and is_upright:
@@ -871,6 +731,18 @@ class Falcon9LandingEnv(gym.Env):
                     [self.target_x, self.target_y + self.landing_zone_radius, 0.3],
                     [1, 0, 0], lineWidth=3, lifeTime=0.1
                 )
+                
+                # Draw thruster positions for debugging
+                rotation_matrix = np.array(p.getMatrixFromQuaternion(p.getBasePositionAndOrientation(self.rocket)[1])).reshape(3, 3)
+                
+                for name, local_pos in self.thruster_positions.items():
+                    world_pos = pos + rotation_matrix @ local_pos
+                    # Draw small sphere at thruster location
+                    p.addUserDebugLine(
+                        world_pos, 
+                        [world_pos[0], world_pos[1], world_pos[2] + 0.2],
+                        [0, 1, 1], lineWidth=2, lifeTime=0.1
+                    )
 
     def close(self):
         """Clean up resources"""
@@ -881,55 +753,72 @@ class Falcon9LandingEnv(gym.Env):
 
 # Example usage and testing
 # if __name__ == "__main__":
-#     # Example 1: Use automatic detection (your files in current folder)
-#     print("Example 1: Automatic URDF detection")
-#     try:
-#         env = Falcon9LandingEnv(render_mode="human")
-#         print("✅ Environment created with auto-detected files")
-#         obs, info = env.reset()
-#         env.close()
-#     except Exception as e:
-#         print(f"❌ Auto-detection failed: {e}")
+#     print("Falcon9 Environment with 4 Individual Thrusters Test")
+#     print("="*55)
     
-#     print("\n" + "="*50)
+#     # Test the new 4-thruster system
+#     env = Falcon9LandingEnv(render_mode="human")
     
-#     # Example 2: Direct path specification
-#     print("Example 2: Direct path specification")
+#     obs, info = env.reset()
+#     print(f"Initial observation shape: {obs.shape}")
+#     print(f"Action space: {env.action_space}")
+#     print(f"Action space shape: {env.action_space.shape}")
+#     print("Actions: [main_thrust, thruster_north, thruster_east, thruster_south, thruster_west]")
     
-#     # PASTE YOUR PATHS HERE:
-#     rocket_path = r"C:\Users\Lenovo\Desktop\falcon9_project\rocket.urdf"
-#     pad_path = r"C:\Users\Lenovo\Desktop\falcon9_project\landing_pad.urdf"
+#     for step in range(500):
+#         # Test control using individual thrusters
+#         pos = obs[0:3]
+#         vel = obs[3:6]
+#         quat = obs[6:10]
+#         ang_vel = obs[10:13]
+        
+#         # Basic landing controller with individual thruster control
+#         altitude_error = pos[2] - 1.0  # Target 1m altitude
+#         vertical_vel = vel[2]
+        
+#         # Main thrust control
+#         main_thrust = 0.4 + altitude_error * 0.05 - vertical_vel * 0.1
+#         main_thrust = np.clip(main_thrust, 0.0, 1.0)
+        
+#         # Individual thruster control for attitude and position
+#         rotation_matrix = np.array(p.getMatrixFromQuaternion(quat)).reshape(3, 3)
+        
+#         # Calculate desired corrections
+#         tilt_x = rotation_matrix[0, 2]  # Roll tilt
+#         tilt_y = rotation_matrix[1, 2]  # Pitch tilt
+        
+#         # Horizontal position errors
+#         pos_error_x = pos[0] - 0.0  # Target x=0
+#         pos_error_y = pos[1] - 0.0  # Target y=0
+        
+#         # Simple thruster control logic
+#         # North thruster (front): controls pitch and Y movement
+#         thruster_north = np.clip(-tilt_y * 0.5 - pos_error_y * 0.1 - ang_vel[1] * 0.1, 0.0, 1.0)
+        
+#         # South thruster (back): opposite of north
+#         thruster_south = np.clip(tilt_y * 0.5 + pos_error_y * 0.1 + ang_vel[1] * 0.1, 0.0, 1.0)
+        
+#         # East thruster (right): controls roll and X movement
+#         thruster_east = np.clip(-tilt_x * 0.5 - pos_error_x * 0.1 - ang_vel[0] * 0.1, 0.0, 1.0)
+        
+#         # West thruster (left): opposite of east
+#         thruster_west = np.clip(tilt_x * 0.5 + pos_error_x * 0.1 + ang_vel[0] * 0.1, 0.0, 1.0)
+        
+#         action = np.array([main_thrust, thruster_north, thruster_east, thruster_south, thruster_west])
+        
+#         obs, reward, terminated, truncated, info = env.step(action)
+        
+#         if step % 60 == 0:  # Print every second
+#             print(f"Step {step}: Alt={pos[2]:.1f}m, Reward={reward:.1f}")
+#             print(f"  Thrusters - N:{thruster_north:.2f}, E:{thruster_east:.2f}, S:{thruster_south:.2f}, W:{thruster_west:.2f}")
+        
+#         if terminated or truncated:
+#             print(f"Episode ended at step {step}")
+#             print(f"Final distance to target: {info['distance_to_target']:.2f}m")
+#             print(f"Final altitude: {info['altitude']:.2f}m")
+#             print(f"Final speed: {info['speed']:.2f}m/s")
+#             print(f"Landing successful: {info.get('landed_successfully', False)}")
+#             break
     
-#     try:
-#         env = Falcon9LandingEnv(
-#             render_mode="human",
-#             rocket_urdf_path=rocket_path,
-#             landing_pad_urdf_path=pad_path
-#         )
-#         print("✅ Environment created with direct paths")
-        
-#         # Test the environment
-#         obs, info = env.reset()
-#         print(f"Initial observation shape: {obs.shape}")
-#         print(f"Initial altitude: {obs[2]:.1f}m")
-        
-#         # Run a few steps to test
-#         for step in range(100):
-#             # Simple hover test
-#             action = np.array([0.45, 0.0, 0.0, 0.0])  # Light thrust, no RCS
-#             obs, reward, terminated, truncated, info = env.step(action)
-            
-#             if step % 20 == 0:
-#                 print(f"Step {step}: Alt={obs[2]:.1f}m, Reward={reward:.1f}")
-            
-#             if terminated or truncated:
-#                 print(f"Episode ended at step {step}")
-#                 break
-        
-#         env.close()
-#         print("✅ Environment test completed successfully!")
-        
-#     except Exception as e:
-#         print(f"❌ Direct path test failed: {e}")
-#         import traceback
-#         traceback.print_exc()
+#     env.close()
+#     print("4-Thruster environment test completed!")
