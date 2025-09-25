@@ -15,4 +15,4 @@ neural_netowrk_model:
 
 ->using ppo(proximal policy optimization) Rl algorithm
 
-(Readme file still unfinished ..... )
+(Readme file still unfinished ...... )
