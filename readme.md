@@ -9,7 +9,7 @@ for the model and training that model in our custom environment .
 
 ## Demo:
 
-![img_1](images\image1.png)
+![img_1](images/image1.png)
 
 
 environment:
