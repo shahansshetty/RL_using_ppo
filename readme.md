@@ -1,4 +1,4 @@
-# Reinforcement learing rocket agent using Policy Based Netowrks
+# Reinforcement learing rocket agent using Policy Based Networks
 
 ## Conetxt:
 
@@ -11,12 +11,19 @@ for the model and training that model in our custom environment .
 
 ![img_1](images/image1.png)
 
+![img_2](images/image2.png)
 
-environment:
 
-->custom env using gynasium and pybullet
 
-->using rocket.urdf as rocket model and using landing.urdf for the model of the landing pad
+### Prequisites:
+* Python 
+* Visual sudios (not vs code),for installing c++ development kit 
+* Install libraies in requiremnets.txt
+
+### Environemt:
+* Custom env using gynasium and pybullet
+
+* Using rocket.urdf as rocket model and using landing.urdf for the model of the landing pad
 
 neural_netowrk_model:
 
