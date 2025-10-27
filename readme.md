@@ -20,18 +20,15 @@ for the model and training that model in our custom environment .
 
 ### Environemt:
 * Custom env using gynasium and pybullet
-
 * Using rocket.urdf as rocket model and using landing.urdf for the model of the landing pad
 
-neural_netowrk_model:
+## Neural Network Model
 
-->using stable baselines 3 for neural netowrk
+* Using stable baselines 3 for neural netowrk
+* Stable baselines is libary which is used for reliable implementaion of
+  reinforcement learning algorithms .
+* Also supports tensorboard which is used to monitor the performance of the RL algorithm.
+* Using ppo (proximal policy optimization) Rl algorithm
 
-    stable baselines is libary which is used for reliable implementaion of
-    reinforcement learning algorithms .
-
-    Also supports tensorboard which is used to monitor the performance of the RL algorithm.
-
-->using ppo(proximal policy optimization) Rl algorithm
 
 (Readme file still unfinished ...... )
