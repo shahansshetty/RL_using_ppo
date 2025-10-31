@@ -9,13 +9,15 @@ for the model and training that model in our custom environment .
 
 ## Demo:
 
-![img_1](images/image1.png "Trying to land ")|![img_2](images/image2.png "Out of control")
+![img_1](images/image1.png "Trying to land ") 
+
+![img_2](images/image2.png "Out of control")
 
 
 
 ### Prequisites:
 * Python 
-* Visual sudios (not vs code),for installing c++ development kit 
+* Visual studio (not vs code),for installing c++ development kit 
 * Install libraies in requiremnets.txt
 
 ### Environemt:
