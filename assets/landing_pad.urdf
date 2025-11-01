@@ -9,7 +9,7 @@
     <visual>
       <geometry>
         <!-- <box size="10 10 0.1"/> -->
-        <cylinder length="0.1" radius="5"/>
+        <cylinder length="0.1" radius="10"/>
       </geometry>
       <material name="yellow">
         <color rgba="1.0 0.8 0.0 1"/>
