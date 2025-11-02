@@ -51,7 +51,7 @@ class Falcon9LandingEnv(gym.Env):
         self.max_thruster_force = 150000.0  # Newtons per individual thruster
         self.rocket_mass = 30000.0      # kg
         self.initial_fuel = 2000.0      # kg
-        self.fuel_consumption_rate = 5  # kg per second at max thrust
+        self.fuel_consumption_rate = 10  # kg per second at max thrust
         
         # Environment state
         self.client = None
@@ -196,7 +196,7 @@ class Falcon9LandingEnv(gym.Env):
         # Random starting position (higher altitude, some horizontal offset)
         start_x = np.random.uniform(-5.0, 5.0)
         start_y = np.random.uniform(-5.0, 5.0)
-        start_z = np.random.uniform(59.0, 69.0)
+        start_z = np.random.uniform(159.0, 169.0)
         
         # Random starting orientation (small perturbations)
         roll = np.random.uniform(0,0)
@@ -380,14 +380,14 @@ class Falcon9LandingEnv(gym.Env):
             r_position, _ = p.getBasePositionAndOrientation(self.rocket)
             if r_position[2] < 35:
                 p.resetDebugVisualizerCamera(
-                    cameraDistance=25,
+                    cameraDistance=50,
                     cameraYaw=45,
                     cameraPitch=-30,
                     cameraTargetPosition=[0, 0, 10]
                 )
             elif r_position[2]<50:
                 p.resetDebugVisualizerCamera(
-                    cameraDistance=15,          
+                    cameraDistance=30,          
                     cameraYaw=50,              
                     cameraPitch=-100,           
                     cameraTargetPosition=r_position
@@ -395,7 +395,7 @@ class Falcon9LandingEnv(gym.Env):
 
             else:
                 p.resetDebugVisualizerCamera(
-                    cameraDistance=15,          
+                    cameraDistance=30,          
                     cameraYaw=50,              
                     cameraPitch=-40,           
                     cameraTargetPosition=r_position
@@ -426,7 +426,7 @@ class Falcon9LandingEnv(gym.Env):
             thrust_vector = thrust_direction * thrust_force
             
             # Apply thrust at rocket's center of mass with small offset for realism
-            thrust_point = [0, 0, -4.0]  # Bottom of rocket in local coordinates
+            thrust_point = [0, 0, -8.0]  # Bottom of rocket in local coordinates
             p.applyExternalForce(
                 self.rocket, -1, thrust_vector, thrust_point, p.LINK_FRAME
             )
@@ -831,7 +831,7 @@ class Falcon9LandingEnv(gym.Env):
                 return terminated, truncated, landed
 
         # 3. Check for out-of-bounds conditions
-        if horizontal_distance > 10.0 or altitude > 70.0 or altitude < -2.0:
+        if horizontal_distance > 10.0 or altitude > 170.0 or altitude < -2.0:
             print("🚫 OUT OF BOUNDS!")
             terminated = True
             return terminated, truncated, landed
