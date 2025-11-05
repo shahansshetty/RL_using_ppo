@@ -29,6 +29,10 @@ for the model and training that model in our custom environment .
   reinforcement learning algorithms .
 * Also supports tensorboard which is used to monitor the performance of the RL algorithm.
 * Using ppo (proximal policy optimization) Rl algorithm
+* Also using VecNormalization because we are training the model in multiple parllel environemnts (16 in total) during training.
+
+
+
 
 
 (Readme file still unfinished ...... )
