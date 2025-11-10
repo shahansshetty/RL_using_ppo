@@ -30,10 +30,10 @@ class Falcon9LandingEnv(gym.Env):
         "render_fps": 50,
     }
 
-    def __init__(self, render_mode="human", rocket_urdf_path=r"C:\Users\Lenovo\Desktop\falcon9_project\assets\rocket.urdf", landing_pad_urdf_path=r"C:\Users\Lenovo\Desktop\falcon9_project\assets\landing_pad.urdf"):
+    def __init__(self, render_mode="human",difficulty='hard', rocket_urdf_path=r"C:\Users\Lenovo\Desktop\falcon9_project\assets\rocket.urdf", landing_pad_urdf_path=r"C:\Users\Lenovo\Desktop\falcon9_project\assets\landing_pad.urdf"):
         super().__init__()
         self.render_mode = render_mode
-        
+        self.difficulty=difficulty
         # Action space: [main_thrust, thruster_north, thruster_east, thruster_south, thruster_west]
         self.action_space = spaces.Box(
             low=np.array([0.0, 0.0, 0.0, 0.0, 0.0], dtype=np.float32),
@@ -47,11 +47,11 @@ class Falcon9LandingEnv(gym.Env):
         )
         
         # Physics parameters
-        self.max_main_thrust = 100000.0  # Newtons
+        self.max_main_thrust = 130000.0  # Newtons
         self.max_thruster_force = 5000.0  # Newtons per individual thruster
         self.rocket_mass = 1500.0      # kg
         self.initial_fuel = 1000.0      # kg
-        self.fuel_consumption_rate = 5  # kg per second at max thrust
+        self.fuel_consumption_rate = 7.5 # kg per second at max thrust
         
         # Environment state
         self.client = None
@@ -59,7 +59,7 @@ class Falcon9LandingEnv(gym.Env):
         self.landing_pad = None
         self.ground = None
         self.step_count = 0
-        self.max_steps = 1000
+        self.max_steps = 1200
         self.fuel_remaining = self.initial_fuel
         
         # Target landing zone
@@ -102,7 +102,7 @@ class Falcon9LandingEnv(gym.Env):
         
         # If paths not provided, search for them automatically
         if rocket_path is None or pad_path is None:
-            print("🔍 Searching for URDF files...")
+            print(" Searching for URDF files...")
             
             # Look for URDF files in common locations
             possible_locations = [
@@ -194,13 +194,25 @@ class Falcon9LandingEnv(gym.Env):
             np.random.seed(seed)
             
         # Random starting position (higher altitude, some horizontal offset)
-        start_x = np.random.uniform(-5.0, 5.0)
-        start_y = np.random.uniform(-5.0, 5.0)
-        start_z = np.random.uniform(59.0, 69.0)
+        if self.difficulty == "easy":
+            start_x = np.random.uniform(-1.0, 1.0)
+            start_y = np.random.uniform(-1.0, 1.0)
+            start_z = np.random.uniform(15.0, 25.0)  # LOW altitude
+            self.landing_zone_radius = 10.0
+        elif self.difficulty == "medium":
+            start_x = np.random.uniform(-2.0, 2.0)
+            start_y = np.random.uniform(-2.0, 2.0)
+            start_z = np.random.uniform(30.0, 40.0)  # MEDIUM altitude
+            self.landing_zone_radius = 7.0
+        else:  # hard
+            start_x = np.random.uniform(-3.0, 3.0)
+            start_y = np.random.uniform(-3.0, 3.0)
+            start_z = np.random.uniform(50.0, 60.0)  # HIGH altitude
+            self.landing_zone_radius = 7.0      
         
         # Random starting orientation (small perturbations)
-        roll = np.random.uniform(-0.5, 0.5)
-        pitch = np.random.uniform(-0.5, 0.5) 
+        roll = np.random.uniform(-0.0, 0.0)
+        pitch = np.random.uniform(-0.0, 0.0) 
         yaw = np.random.uniform(-np.pi, np.pi)
         
         start_orientation = p.getQuaternionFromEuler([roll, pitch, yaw])
@@ -214,9 +226,9 @@ class Falcon9LandingEnv(gym.Env):
         
         # Add some initial velocity for realism
         initial_vel = [
-            np.random.uniform(-2.0, 2.0),  # vx
-            np.random.uniform(-2.0, 2.0),  # vy
-            np.random.uniform(-5.0, -1.0)  # vz (falling)
+            np.random.uniform(-0.0, 0.0),  # vx
+            np.random.uniform(-0.0, 0.0),  # vy
+            np.random.uniform(-1.0, -0.5)  # vz (falling)
         ]
         p.resetBaseVelocity(self.rocket, linearVelocity=initial_vel)
         
@@ -380,15 +392,15 @@ class Falcon9LandingEnv(gym.Env):
             r_position, _ = p.getBasePositionAndOrientation(self.rocket)
             if r_position[2] < 35:
                 p.resetDebugVisualizerCamera(
-                    cameraDistance=25,
-                    cameraYaw=45,
-                    cameraPitch=-30,
-                    cameraTargetPosition=[0, 0, 10]
+                    cameraDistance=20,
+                    cameraYaw=0,
+                    cameraPitch=-5,
+                    cameraTargetPosition=[0, 0, 5]
                 )
             else:
                 p.resetDebugVisualizerCamera(
                     cameraDistance=15,          
-                    cameraYaw=50,              
+                    cameraYaw=10,              
                     cameraPitch=-40,           
                     cameraTargetPosition=r_position
                 )
@@ -494,157 +506,442 @@ class Falcon9LandingEnv(gym.Env):
         
         return observation, reward, terminated, truncated, info
 
+    # def _calculate_reward(self, obs, landed, terminated):
+    #     """
+    #     Improved reward function with better scaling and clearer objectives.
+    #     Key principles:
+    #     1. Consistent reward scaling (-1 to +1 per step, large terminal rewards)
+    #     2. Clear hierarchical objectives (altitude > orientation > position)
+    #     3. Smooth reward gradients for better learning
+    #     """
+        
+    #     # Parse observation
+    #     pos = obs[0:3]
+    #     vel = obs[3:6]
+    #     quat = obs[6:10]
+    #     ang_vel = obs[10:13]
+    #     fuel_fraction = obs[13]
+        
+    #     # Calculate key metrics
+    #     x, y, z = pos
+    #     vx, vy, vz = vel
+    #     altitude = z
+        
+    #     horizontal_distance = np.sqrt((x - self.target_x)**2 + (y - self.target_y)**2)
+    #     speed = np.linalg.norm(vel)
+    #     vertical_speed = abs(vz)
+    #     horizontal_speed = np.sqrt(vx**2 + vy**2)
+    #     angular_speed = np.linalg.norm(ang_vel)
+        
+    #     # Calculate upright score (how vertical the rocket is)
+    #     rotation_matrix = np.array(p.getMatrixFromQuaternion(quat)).reshape(3, 3)
+    #     upright_score = rotation_matrix[2, 2]  # 1.0 = perfectly upright, 0.0 = horizontal
+    #     tilt_angle = np.arccos(np.clip(upright_score, -1, 1))  # radians
+        
+    #     reward = 0.0
+        
+    #     # ============================================================================
+    #     # TERMINAL REWARDS (Large, sparse rewards for episode outcomes)
+    #     # ============================================================================
+        
+    #     if landed:
+    #         # Base landing reward
+    #         base_reward = 2000.0
+            
+    #         # Distance precision bonus (exponential falloff)
+    #         distance_bonus = 1000.0 * np.exp(-horizontal_distance / 1.5)
+            
+    #         # Speed bonus (exponential - reward gentle landing)
+    #         speed_bonus = 500.0 * np.exp(-speed / 2.0)
+            
+    #         # Orientation bonus
+    #         orientation_bonus = 300.0 * upright_score
+            
+    #         # Fuel efficiency bonus
+    #         fuel_bonus = 500.0 * fuel_fraction
+            
+    #         total_landing_reward = (base_reward + distance_bonus + 
+    #                                speed_bonus + orientation_bonus + fuel_bonus)
+            
+    #         # Extra bonus for exceptional landing
+    #         if horizontal_distance < 1.0 and speed < 1.0 and upright_score > 0.98:
+    #             total_landing_reward += 500.0  # Perfect landing bonus
+            
+    #         print(f"🚀 LANDED! Reward: {total_landing_reward:.0f} "
+    #               f"(dist: {horizontal_distance:.2f}m, speed: {speed:.2f}m/s)")
+            
+    #         return total_landing_reward
+        
+    #     if terminated and not landed:
+    #         # Crash penalty (less harsh if you were close)
+    #         base_penalty = -800.0
+            
+    #         # Reduce penalty if close to target (you were trying!)
+    #         if horizontal_distance < self.landing_zone_radius:
+    #             base_penalty *= 0.6
+    #         if horizontal_distance < 3.0:
+    #             base_penalty *= 0.7
+                
+    #         # Reduce penalty if mostly upright (good orientation control)
+    #         if upright_score > 0.8:
+    #             base_penalty *= 0.8
+                
+    #         print(f"💥 CRASHED! Penalty: {base_penalty:.0f}")
+    #         return base_penalty
+        
+    #     # ============================================================================
+    #     # STEP REWARDS (Dense shaping rewards, normalized to roughly -1 to +1 per step)
+    #     # ============================================================================
+        
+    #     time_pressure = 0.05 + (self.step_count / self.max_steps) * 0.2
+    #     reward -= time_pressure
+
+    #     # 1. ALTITUDE REWARD (Primary objective: controlled descent)
+    #     # -------------------------------------------------------------------------
+    #     target_altitude = 0.0  # We want to reach ground
+    #     altitude_error = altitude - target_altitude
+        
+        
+    #     # Reward being at correct altitude for current phase
+    #     if altitude > 20.0:
+    #         altitude_reward = -0.1
+    #         if vz < -2.0:
+    #             altitude_reward += 0.15
+    #     elif altitude > 10.0:
+    #         altitude_reward = 0.2 - altitude * 0.01
+    #         if vz < -2.0:
+    #             altitude_reward += 0.2
+    #     elif altitude > 3.0:
+    #         altitude_reward = 0.5 - altitude * 0.05
+    #         if vz < -1.0:
+    #             altitude_reward += 0.4
+    #         if abs(vz) < 0.5:
+    #             altitude_reward -= 0.5
+    #     else:
+    #         altitude_reward = 0.8
+    #         if abs(vz) < 0.2:
+    #             altitude_reward -= 1.0
+        
+    #     reward += altitude_reward
+        
+    #     # 2. POSITION REWARD (Secondary objective: stay above landing zone)
+    #     # -------------------------------------------------------------------------
+    #     # Exponential reward for being close to target horizontally
+    #     position_reward = 0.2 * np.exp(-horizontal_distance / 10.0)
+    
+    #     if horizontal_distance < self.landing_zone_radius:
+    #         position_reward += 0.15
+    #     # If in zone and low altitude, LAND NOW!
+    #         if altitude < 3.9:
+    #             position_reward += 0.5
+    
+    #     reward += position_reward
+        
+    #     # 3. ORIENTATION REWARD (Critical: must stay upright)
+    #     # -------------------------------------------------------------------------
+    #     # Strong reward for being upright
+    #     orientation_reward = 0.15 * upright_score
+        
+    #     # Penalty for tilting
+    #     if tilt_angle > 0.4:  # More than ~17 degrees
+    #         orientation_reward -= 0.2 * (tilt_angle - 0.4)
+        
+    #     # Penalty for spinning
+    #     if angular_speed > 0.5:
+    #         orientation_reward -= 0.1 * angular_speed
+        
+    #     reward += orientation_reward
+        
+    #     # 4. STABILITY REWARD (Encourage smooth, controlled flight)
+    #     # -------------------------------------------------------------------------
+    #     stability_reward = 0.0
+        
+    #     # Reward low angular velocity (stable flight)
+    #     if angular_speed < 0.2:
+    #         stability_reward += 0.1
+        
+    #     # Reward being in a "good state" for landing
+    #     if altitude < 10.0:
+    #         good_state = (upright_score > 0.9 and 
+    #                      horizontal_distance < self.landing_zone_radius * 1.5 and
+    #                      vertical_speed < 4.0)
+    #         if good_state:
+    #             stability_reward += 0.2
+        
+    #     reward += stability_reward
+        
+    #     # 5. FUEL MANAGEMENT (Gentle penalty for fuel usage)
+    #     # -------------------------------------------------------------------------
+    #     # Small penalty for low fuel (but don't discourage necessary thrust)
+    #     fuel_penalty_factor = 0.5 + (self.step_count / self.max_steps) * 2.0
+    
+    #     if fuel_fraction < 0.3:
+    #         reward -= (0.3 - fuel_fraction) * fuel_penalty_factor
+    
+    #     if self.fuel_remaining <= 0:
+    #         reward -= 2.0
+        
+    #     #hovering detection:
+    #     is_hovering = (altitude < 10.0 and 
+    #                abs(vz) < 1.0 and 
+    #                horizontal_distance < self.landing_zone_radius * 1.5)
+    
+    #     if is_hovering:
+    #         hover_penalty = -0.3 - (self.step_count / self.max_steps) * 0.5
+    #         reward += hover_penalty
+        
+    #     if altitude < 5.0:
+    #         reward -= 0.5
+
+
+    #     # 6. PROGRESS REWARDS (Encourage improvement over time)
+    #     # -------------------------------------------------------------------------
+    #     progress_reward = 0.0
+        
+    #     # Reward getting closer to target
+    #     if self.previous_distance is not None:
+    #         distance_improvement = self.previous_distance - horizontal_distance
+    #         progress_reward += distance_improvement * 0.5  # Scale appropriately
+    #     self.previous_distance = horizontal_distance
+        
+    #     # Reward altitude progress (when appropriate)
+    #     if self.previous_altitude is not None:
+    #         if altitude > 5.0:
+    #             # Reward descent at high altitude
+    #             altitude_progress = self.previous_altitude - altitude
+    #             if altitude_progress > 0:  # Descending
+    #                 progress_reward += altitude_progress * 0.1
+    #     self.previous_altitude = altitude
+        
+    #     reward += progress_reward
+        
+    #     # 7. TIME PENALTY (Encourage efficiency, but keep small)
+    #     # -------------------------------------------------------------------------
+    #       # Small penalty to encourage not wasting time
+        
+
+    #     #8. Descent reward :
+    #     if vz < -1.0 and altitude > 3.0:
+    #         descent_reward = min(abs(vz) * 0.1, 0.3)
+    #         reward += descent_reward
+
+    #     # ============================================================================
+    #     # CONSTRAINT PENALTIES (Prevent bad behavior)
+    #     # ============================================================================
+        
+    #     # Strong penalty for dangerous situations
+    #     if altitude < 3.0 and vertical_speed > 8.0:
+    #         reward -= 1.5  # About to crash hard!
+        
+    #     if altitude < 10.0 and upright_score < 0.5:
+    #         reward -= 0.8  # Tilted too much near ground
+        
+    #     if horizontal_distance > 20.0:
+    #         reward -= 0.5  # Too far from target
+        
+    #     # ============================================================================
+    #     # REWARD CLIPPING (Keep step rewards in reasonable range)
+    #     # ============================================================================
+    #     # Clip step rewards to prevent extreme values (but allow terminal rewards through)
+    #     reward = np.clip(reward, -3.0, 3.0)
+        
+    #     return reward    
+    
     def _calculate_reward(self, obs, landed, terminated):
-        """Improved reward function for better PPO performance"""
+        """
+        Anti-hovering reward function.
+        Key changes:
+        1. Strong time penalty to discourage hovering
+        2. Exponential altitude rewards (gets urgent near ground)
+        3. Fuel penalty increases over time
+        4. Landing bonus >>> accumulated step rewards
+        """
 
         # Parse observation
         pos = obs[0:3]
-        vel = obs[3:6] 
+        vel = obs[3:6]
         quat = obs[6:10]
         ang_vel = obs[10:13]
         fuel_fraction = obs[13]
 
         # Calculate key metrics
-        horizontal_distance = np.sqrt((pos[0] - self.target_x)**2 + (pos[1] - self.target_y)**2)
-        altitude = pos[2]
+        x, y, z = pos
+        vx, vy, vz = vel
+        altitude = z
+
+        horizontal_distance = np.sqrt((x - self.target_x)**2 + (y - self.target_y)**2)
         speed = np.linalg.norm(vel)
-        vertical_speed = abs(vel[2])
-        horizontal_speed = np.sqrt(vel[0]**2 + vel[1]**2)
+        vertical_speed = abs(vz)
+        horizontal_speed = np.sqrt(vx**2 + vy**2)
         angular_speed = np.linalg.norm(ang_vel)
 
         # Calculate upright score
         rotation_matrix = np.array(p.getMatrixFromQuaternion(quat)).reshape(3, 3)
-        upright_score = rotation_matrix[2, 2]  # 1.0 = perfectly upright
+        upright_score = rotation_matrix[2, 2]
+        tilt_angle = np.arccos(np.clip(upright_score, -1, 1))
 
-        # Initialize reward
         reward = 0.0
 
-        # 1. TERMINAL REWARDS (large, sparse)
+        # ========================================================================
+        # TERMINAL REWARDS
+        # ========================================================================
+
         if landed:
-            # Graduated landing bonus based on precision
-            landing_bonus = 500.0
-            if horizontal_distance < 1.0:
-                landing_bonus += 500.0  # Perfect landing
-            if horizontal_distance < 2.0:
-                landing_bonus += 400.0  # Perfect landing
-            if horizontal_distance < 3.0:
-                landing_bonus += 300.0  # Perfect landing
-            elif horizontal_distance < 4:
-                landing_bonus += 200.0  # Good landing
-            elif horizontal_distance < self.landing_zone_radius:
-                landing_bonus += 100.0  # Acceptable landing
+            # Massive landing bonus (must be >> accumulated step rewards)
+            base_reward = 2000.0
 
-            # Speed bonus for gentle landing
-            if speed < 1.0:
-                landing_bonus += 200.0
-            elif speed < 2.0:
-                landing_bonus += 100.0
+            # Distance bonus
+            distance_bonus = 1000.0 * np.exp(-horizontal_distance / 1.5)
 
-            # Upright bonus
-            if upright_score > 0.95:
-                landing_bonus += 150.0
+            # Speed bonus (gentle landing)
+            speed_bonus = 500.0 * np.exp(-speed / 2.0)
 
-            # Fuel efficiency bonus
-            landing_bonus += fuel_fraction * 100.0
+            # Orientation bonus
+            orientation_bonus = 300.0 * upright_score
 
-            # Track best performance
-            if horizontal_distance < self.best_landing_distance:
-                self.best_landing_distance = horizontal_distance
-                landing_bonus += 200.0  # Bonus for personal best
+            # Fuel bonus (reward efficiency)
+            fuel_bonus = 500.0 * fuel_fraction
 
-            return landing_bonus
+            # Time bonus (reward fast landing)
+            time_bonus = 500.0 * (1.0 - self.step_count / self.max_steps)
+
+            total_landing_reward = (base_reward + distance_bonus + speed_bonus + 
+                                   orientation_bonus + fuel_bonus + time_bonus)
+
+            print(f"🚀 LANDED! Reward: {total_landing_reward:.0f} "
+                  f"(dist: {horizontal_distance:.2f}m, speed: {speed:.2f}m/s, steps: {self.step_count})")
+
+            return total_landing_reward
 
         if terminated and not landed:
-            # Graduated crash penalty (less harsh than your -100)
-            crash_penalty = -200.0
+            # Crash penalty
+            base_penalty = -800.0
 
-            # Less penalty if close to target when crashed
+            # Less penalty if close and trying
             if horizontal_distance < self.landing_zone_radius:
-                crash_penalty = -200.0
-            if horizontal_distance < 2.5:
-                crash_penalty = -150.0
+                base_penalty *= 0.6
+            if upright_score > 0.8:
+                base_penalty *= 0.8
 
-            return crash_penalty
+            print(f"💥 CRASHED! Penalty: {base_penalty:.0f}")
+            return base_penalty
 
-        # 2. PROGRESS REWARDS (dense shaping)
+        # ========================================================================
+        # STEP REWARDS - Designed to prevent hovering
+        # ========================================================================
 
-        # Distance progress reward (encourage moving toward target)
-        if self.previous_distance is not None:
-            distance_progress = self.previous_distance - horizontal_distance
-            reward += distance_progress * 5.0  # Reward getting closer
-        self.previous_distance = horizontal_distance
+        # 1. STRONG TIME PENALTY (discourages hovering)
+        # -----------------------------------------------------------------------
+        # Penalty increases over time - hovering becomes more expensive
+        time_pressure = 0.05 + (self.step_count / self.max_steps) * 0.2
+        reward -= time_pressure
 
-        # Altitude progress reward (encourage controlled descent)
-        if self.previous_altitude is not None and altitude > 0:
-            altitude_progress = self.previous_altitude - altitude
-            # Only reward descent when above target, penalize when below and moving away
-            if altitude > 1.0:
-                reward += altitude_progress * 2.0
-            elif altitude < 1.0 and altitude_progress < 0:  # Moving up when should be landing
-                reward -= 5.0
-        self.previous_altitude = altitude
-
-        # 3. STATE-BASED REWARDS (continuous shaping)
-
-        # Proximity reward (exponentially increasing as you get closer)
-        max_distance = 50.0  # Maximum expected distance
-        proximity_reward = 10.0 * (1.0 - min(horizontal_distance / max_distance, 1.0))**2
-        reward += proximity_reward
-
-        # Altitude-dependent rewards
-        if altitude < 5.0:
-            # Close to landing - emphasize precision and control
-            reward += upright_score * 15.0  # Strong upright bonus when landing
-            reward -= vertical_speed * 8.0  # Penalize fast descent
-            reward -= horizontal_speed * 10.0  # Penalize horizontal drift
-            reward -= angular_speed * 15.0  # Penalize spinning near ground
-
-            # Landing zone bonus when close to ground
-            if horizontal_distance < self.landing_zone_radius:
-                reward += 20.0
-
-        elif altitude < 15.0:
-            # Mid-altitude - encourage stable descent
-            reward += upright_score * 8.0
-            reward -= vertical_speed * 3.0 if vertical_speed > 3.0 else 0  # Only penalize if too fast
-            reward -= horizontal_speed * 2.0
-            reward -= angular_speed * 5.0
-
+        # 2. ALTITUDE REWARD (exponentially increasing urgency to land)
+        # -----------------------------------------------------------------------
+        # The lower you are, the more urgent it is to land NOW
+        if altitude > 20.0:
+            altitude_reward = -0.1  # Penalty for being high
+            if vz < -2.0:  # Reward descending
+                altitude_reward += 0.15
+        elif altitude > 10.0:
+            # Mid altitude - start being urgent
+            altitude_reward = 0.2 - altitude * 0.01
+            if vz < -2.0:
+                altitude_reward += 0.2
+        elif altitude > 3.0:
+            # Low altitude - VERY urgent to land
+            altitude_reward = 0.5 - altitude * 0.05
+            # Strong reward for descending
+            if vz < -1.0:
+                altitude_reward += 0.4
+            # Penalty for hovering (not descending)
+            if abs(vz) < 0.5:
+                altitude_reward -= 0.5  # HOVERING PENALTY!
         else:
-            # High altitude - encourage general orientation and approach
-            reward += upright_score * 3.0
-            reward -= angular_speed * 2.0
-            # Small penalty for being too high (encourage descent)
-            reward -= (altitude - 15.0) * 0.1
+            # Very close to ground - just land!
+            altitude_reward = 0.8
+            if abs(vz) < 0.2:  # Hovering at ground level
+                altitude_reward -= 1.0  # SEVERE HOVERING PENALTY!
 
-        # 4. FUEL EFFICIENCY
-        # Reward fuel conservation, but don't penalize use when necessary
-        if fuel_fraction > 0.8:
-            reward += 2.0  # Bonus for high fuel
-        elif fuel_fraction < 0.1:
-            reward -= 5.0  # Penalty for very low fuel
+        reward += altitude_reward
 
-        # 5. STABILITY REWARDS
-        # Reward low angular velocity (stable flight)
-        if angular_speed < 0.1:
-            reward += 3.0
-        elif angular_speed > 2.0:
-            reward -= angular_speed * 3.0
+        # 3. POSITION REWARD (be above landing zone)
+        # -----------------------------------------------------------------------
+        position_reward = 0.2 * np.exp(-horizontal_distance / 10.0)
 
-        # 6. BEHAVIORAL SHAPING
-        # Small time penalty to encourage efficiency (but not too harsh)
-        reward -= 0.05
+        if horizontal_distance < self.landing_zone_radius:
+            position_reward += 0.15
+            # If in zone and low altitude, LAND NOW!
+            if altitude < 4.5:
+                position_reward += 0.3
 
-        # Encourage being in landing zone even at altitude
-        if horizontal_distance < self.landing_zone_radius * 2.0:
-            reward += 2.0
+        reward += position_reward
 
-        # Bonus for maintaining good approach angle
-        if altitude > 2.0 and upright_score > 0.8 and horizontal_distance < 10.0:
-            reward += 5.0  # Good approach bonus
+        # 4. ORIENTATION REWARD (stay upright)
+        # -----------------------------------------------------------------------
+        orientation_reward = 0.15 * upright_score  # Reduced from 0.3
+
+        if tilt_angle > 0.4:
+            orientation_reward -= 0.2 * (tilt_angle - 0.4)
+
+        if angular_speed > 0.5:
+            orientation_reward -= 0.1 * angular_speed
+
+        reward += orientation_reward
+
+        # 5. FUEL PENALTY (increases over time)
+        # -----------------------------------------------------------------------
+        # Penalize fuel usage more as time goes on
+        fuel_penalty_factor = 0.5 + (self.step_count / self.max_steps) * 2.0
+
+        if fuel_fraction < 0.3:
+            reward -= (0.3 - fuel_fraction) * fuel_penalty_factor
+
+        if self.fuel_remaining <= 0:
+            reward -= 2.0  # Severe penalty for running out
+
+        # 6. HOVERING DETECTION (explicit penalty)
+        # -----------------------------------------------------------------------
+        # Detect hovering: low altitude + low vertical speed + in zone
+        is_hovering = (altitude < 10.0 and 
+                       abs(vz) < 1.0 and 
+                       horizontal_distance < self.landing_zone_radius * 1.5)
+
+        if is_hovering:
+            # Hovering penalty increases the longer you hover
+            hover_penalty = -0.3 - (self.step_count / self.max_steps) * 0.5
+            reward += hover_penalty
+
+            # Extra penalty if hovering at very low altitude
+            if altitude < 5.0:
+                reward -= 0.5
+
+        # 7. DESCENT REWARD (reward active descent)
+        # -----------------------------------------------------------------------
+        if vz < -1.0 and altitude > 3.0:
+            # Reward descending (but not too fast)
+            descent_reward = min(abs(vz) * 0.1, 0.3)
+            reward += descent_reward
+
+        # ========================================================================
+        # CONSTRAINT PENALTIES
+        # ========================================================================
+
+        # Dangerous situations
+        if altitude < 3.0 and vertical_speed > 8.0:
+            reward -= 1.5
+
+        if altitude < 10.0 and upright_score < 0.5:
+            reward -= 0.8
+
+        if horizontal_distance > 20.0:
+            reward -= 0.5
+
+        # Clip to reasonable range
+        reward = np.clip(reward, -3.0, 3.0)
 
         return reward
-
+    
     def _check_termination(self, obs):
         """Check if the episode should terminate with stricter conditions."""
         pos = obs[0:3]
@@ -655,6 +952,8 @@ class Falcon9LandingEnv(gym.Env):
         speed = np.linalg.norm(vel)
         horizontal_distance = np.sqrt((pos[0] - self.target_x)**2 + (pos[1] - self.target_y)**2)
         
+        
+
         # Calculate upright score from quaternion
         try:
             rotation_matrix = np.array(p.getMatrixFromQuaternion(quat)).reshape(3, 3)
@@ -672,11 +971,24 @@ class Falcon9LandingEnv(gym.Env):
 
         # 1. Check for successful landing (requires being very close to the ground)
         if altitude <= 2.5:
-            is_on_target = horizontal_distance < self.landing_zone_radius
-            is_slow_enough = speed < 4.5  # Stricter speed requirement
-            is_upright = upright_score > 0.98 # Stricter upright requirement (less than ~18 deg tilt)
+            if self.difficulty=='easy':
+                is_on_target = horizontal_distance < self.landing_zone_radius
+                is_slow_enough = speed < 6  # Stricter speed requirement
+                is_upright = upright_score > 0.97
+            elif self.difficulty=='medium':
+                is_on_target = horizontal_distance < self.landing_zone_radius
+                is_slow_enough = speed < 5  # Stricter speed requirement
+                is_upright = upright_score > 0.98
+            else:
+                is_on_target = horizontal_distance < self.landing_zone_radius
+                is_slow_enough = speed < 4.5  # Stricter speed requirement
+                is_upright = upright_score > 0.98
+                
+
+             # Stricter upright requirement (less than ~18 deg tilt)
 
             if is_on_target and is_slow_enough and is_upright:
+                # time.sleep(2)
                 terminated = True
                 landed = True
                 print("🚀 SUCCESSFUL LANDING!")
@@ -689,10 +1001,21 @@ class Falcon9LandingEnv(gym.Env):
                 return terminated, truncated, landed
 
         # 3. Check for out-of-bounds conditions
-        if horizontal_distance > 70.0 or altitude > 70.0 or altitude < -2.0:
-            print("🚫 OUT OF BOUNDS!")
-            terminated = True
-            return terminated, truncated, landed
+        if self.difficulty=='easy':
+            if horizontal_distance > 10.0 or altitude > 27.0 or altitude < -2.0:
+                print("🚫 OUT OF BOUNDS!")
+                terminated = True
+                return terminated, truncated, landed
+        elif self.difficulty=='medium':
+            if horizontal_distance > 10.0 or altitude > 44.0 or altitude < -2.0:
+                print("🚫 OUT OF BOUNDS!")
+                terminated = True
+                return terminated, truncated, landed
+        else:
+            if horizontal_distance > 10.0 or altitude > 62.0 or altitude < -2.0:
+                print("🚫 OUT OF BOUNDS!")
+                terminated = True
+                return terminated, truncated, landed
             
         # 4. Check for time limit
         if self.step_count >= self.max_steps:
@@ -751,74 +1074,3 @@ class Falcon9LandingEnv(gym.Env):
             self.client = None
 
 
-# Example usage and testing
-# if __name__ == "__main__":
-#     print("Falcon9 Environment with 4 Individual Thrusters Test")
-#     print("="*55)
-    
-#     # Test the new 4-thruster system
-#     env = Falcon9LandingEnv(render_mode="human")
-    
-#     obs, info = env.reset()
-#     print(f"Initial observation shape: {obs.shape}")
-#     print(f"Action space: {env.action_space}")
-#     print(f"Action space shape: {env.action_space.shape}")
-#     print("Actions: [main_thrust, thruster_north, thruster_east, thruster_south, thruster_west]")
-    
-#     for step in range(500):
-#         # Test control using individual thrusters
-#         pos = obs[0:3]
-#         vel = obs[3:6]
-#         quat = obs[6:10]
-#         ang_vel = obs[10:13]
-        
-#         # Basic landing controller with individual thruster control
-#         altitude_error = pos[2] - 1.0  # Target 1m altitude
-#         vertical_vel = vel[2]
-        
-#         # Main thrust control
-#         main_thrust = 0.4 + altitude_error * 0.05 - vertical_vel * 0.1
-#         main_thrust = np.clip(main_thrust, 0.0, 1.0)
-        
-#         # Individual thruster control for attitude and position
-#         rotation_matrix = np.array(p.getMatrixFromQuaternion(quat)).reshape(3, 3)
-        
-#         # Calculate desired corrections
-#         tilt_x = rotation_matrix[0, 2]  # Roll tilt
-#         tilt_y = rotation_matrix[1, 2]  # Pitch tilt
-        
-#         # Horizontal position errors
-#         pos_error_x = pos[0] - 0.0  # Target x=0
-#         pos_error_y = pos[1] - 0.0  # Target y=0
-        
-#         # Simple thruster control logic
-#         # North thruster (front): controls pitch and Y movement
-#         thruster_north = np.clip(-tilt_y * 0.5 - pos_error_y * 0.1 - ang_vel[1] * 0.1, 0.0, 1.0)
-        
-#         # South thruster (back): opposite of north
-#         thruster_south = np.clip(tilt_y * 0.5 + pos_error_y * 0.1 + ang_vel[1] * 0.1, 0.0, 1.0)
-        
-#         # East thruster (right): controls roll and X movement
-#         thruster_east = np.clip(-tilt_x * 0.5 - pos_error_x * 0.1 - ang_vel[0] * 0.1, 0.0, 1.0)
-        
-#         # West thruster (left): opposite of east
-#         thruster_west = np.clip(tilt_x * 0.5 + pos_error_x * 0.1 + ang_vel[0] * 0.1, 0.0, 1.0)
-        
-#         action = np.array([main_thrust, thruster_north, thruster_east, thruster_south, thruster_west])
-        
-#         obs, reward, terminated, truncated, info = env.step(action)
-        
-#         if step % 60 == 0:  # Print every second
-#             print(f"Step {step}: Alt={pos[2]:.1f}m, Reward={reward:.1f}")
-#             print(f"  Thrusters - N:{thruster_north:.2f}, E:{thruster_east:.2f}, S:{thruster_south:.2f}, W:{thruster_west:.2f}")
-        
-#         if terminated or truncated:
-#             print(f"Episode ended at step {step}")
-#             print(f"Final distance to target: {info['distance_to_target']:.2f}m")
-#             print(f"Final altitude: {info['altitude']:.2f}m")
-#             print(f"Final speed: {info['speed']:.2f}m/s")
-#             print(f"Landing successful: {info.get('landed_successfully', False)}")
-#             break
-    
-#     env.close()
-#     print("4-Thruster environment test completed!")
