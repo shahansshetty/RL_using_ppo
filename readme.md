@@ -9,14 +9,29 @@ for the model and training that model in our custom environment .
 
 ## Demo:
 
-![img_1](images/image1.png "Trying to land ")|![img_2](images/image2.png "Out of control")
+![img_1](images/trying_to_land.png "Trying to land ")|![img_2](images/image2.png "Out of control")
 
 
 
 ### Prequisites:
 * Python 
-* Visual sudios (not vs code),for installing c++ development kit 
-* Install libraies in requiremnets.txt
+* Visual studios (not vs code),for installing c++ development kit 
+* Install libraies in requirements.txt
+
+
+### How to run this project in your device:
+1. First git clone the repo :
+     git clone https://github.com/shahansshetty/RL_using_ppo.git
+2. Create your environment :
+    python -m  venv venv
+    venv\Scripts\activate
+3. Now install requirements.txt :
+    pip install -r requirements.txt
+4. Now to test the simulation , run :
+    python test_environment.py
+5. To run the per-trained model run :
+    python test.py
+    
 
 ### Environemt:
 * Custom env using gynasium and pybullet

@@ -130,13 +130,13 @@ class Falcon9LandingEnv(gym.Env):
             
         else:  # Level 5
             # Level 5: Expert - realistic conditions
-            self.start_altitude_range = (40.0, 50.0)
+            self.start_altitude_range = (250.0, 250.0)
             self.start_position_range = (-3.0, 3.0)
             self.start_velocity_range = (-2.5, -1.5)
             self.landing_zone_radius = 7.0
             self.max_tilt_for_landing = 0.97  # ~14 degrees
             self.max_speed_for_landing = 4.0
-            self.altitude_bounds = (-2.0, 55.0)
+            self.altitude_bounds = (-2.0, 1005.0)
             self.horizontal_bounds = 20.0
 
     def set_curriculum_level(self, level):
@@ -351,14 +351,20 @@ class Falcon9LandingEnv(gym.Env):
         
         if self.render_mode == "human":
             r_position, _ = p.getBasePositionAndOrientation(self.rocket)
-            if r_position[2] < 35:
+            if r_position[2]>100:
+                p.resetDebugVisualizerCamera(
+                    cameraDistance=20, cameraYaw=0, cameraPitch=-80,
+                    cameraTargetPosition=r_position
+                )
+            elif r_position[2] < 25:
                 p.resetDebugVisualizerCamera(
                     cameraDistance=20, cameraYaw=0, cameraPitch=-5,
                     cameraTargetPosition=[0, 0, 5]
                 )
+
             else:
                 p.resetDebugVisualizerCamera(
-                    cameraDistance=15, cameraYaw=10, cameraPitch=-40,
+                    cameraDistance=20, cameraYaw=10, cameraPitch=-45,
                     cameraTargetPosition=r_position
                 )
 
@@ -602,6 +608,7 @@ class Falcon9LandingEnv(gym.Env):
             if is_on_target and is_slow_enough and is_upright:
                 terminated = True
                 landed = True
+                time.sleep(2)
                 return terminated, truncated, landed
             else:
                 terminated = True

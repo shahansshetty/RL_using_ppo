@@ -1,41 +1,73 @@
+# test_model.py
 from stable_baselines3 import PPO
+from stable_baselines3.common.vec_env import DummyVecEnv, VecNormalize
 from lander_env import Falcon9LandingEnv
+import numpy as np
+import time
 
-# Load your trained model
-model = PPO.load("PPO_with_5_AP_7.zip")
-# Create environment with rendering to watch
-env = Falcon9LandingEnv(render_mode="rgb_array")
 
-# Use the model
-obs, info = env.reset()
+def test_model(model_path, vecnorm_path, n_episodes=10):
+    """Test trained model with rendering"""
+    difficulty_level=int(input('Enter the difficlty level (1-5)1-easy 5-hardest :'))
+    # Create test environment (single env with rendering)
 
-highest=-999
-l_count,count=0,0
-
-for step in range(50000):
-    action, _states = model.predict(obs)
-    obs, reward, terminated, truncated, info = env.step(action)
+    test_env = DummyVecEnv([lambda: Falcon9LandingEnv(render_mode="human",curriculum_level=difficulty_level)])
     
-    if terminated or truncated:
-        if info["landed_successfully"]:
-            print(f"Landing completed!")
-            l_count+=1
-            # break
-        else:
-            print('crashed')
-        print(f"Distance from target: {info['distance_to_target'] :.2f}m")
-        print(f"Landing speed: {info['speed']:.2f}m/s")
-        count+=1
-        obs, info = env.reset()
-    if reward>highest:
-        highest=reward
-
+    # Load VecNormalize stats
+    test_env = VecNormalize.load(vecnorm_path, test_env)
+    test_env.training = False  # Don't update stats
+    test_env.norm_reward = False  # See actual rewards
+    
+    # Load model
+    model = PPO.load(model_path, env=test_env)
+    
+    print(f"Testing model for {n_episodes} episodes...")
+    
+    episode_rewards = []
+    episode_lengths = []
+    successful_landings = 0
+    
+    for episode in range(n_episodes):
+        obs = test_env.reset()
+        episode_reward = 0
+        episode_length = 0
+        done = False
         
-    # if step%200==0:
-    #     print(step)
+        while not done:
+            action, _states = model.predict(obs, deterministic=True)
+            obs, reward, done, info = test_env.step(action)
+            episode_reward += reward[0]
+            episode_length += 1
+            
+            
+            if done:
+                if info[0].get('landed_successfully', False):
+                    successful_landings += 1
+                    
+                    print(f"✅ Episode {episode+1}: LANDED! "
+                          f"Reward: {episode_reward:.0f}, "
+                          f"Distance: {info[0]['distance_to_target']:.2f}m")
+                else:
+                    print(f"💥 Episode {episode+1}: CRASHED. "
+                          f"Reward: {episode_reward:.0f}")
+        
+        episode_rewards.append(episode_reward)
+        episode_lengths.append(episode_length)
     
+    print(f"\n{'='*60}")
+    print(f"Test Results:")
+    print(f"  Success rate: {successful_landings}/{n_episodes} "
+          f"({successful_landings/n_episodes*100:.1f}%)")
+    print(f"  Average reward: {np.mean(episode_rewards):.0f} ± {np.std(episode_rewards):.0f}")
+    print(f"  Average length: {np.mean(episode_lengths):.0f} steps")
+    print(f"{'='*60}")
+    
+    test_env.close()
 
-
-print(f'Highest:{highest},landing_count : {l_count},total_eps: {count}')
-print('')
-env.close()
+if __name__ == "__main__":
+    # Test best model
+    test_model(
+        model_path=r'models_curriculum/falcon9_final.zip',
+        vecnorm_path=r"models_curriculum/falcon9_final_vecnorm.pkl",
+        n_episodes=10
+    )
