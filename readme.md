@@ -1,6 +1,6 @@
 # Reinforcement learing rocket agent using Policy Based Networks
 
-## Conetxt:
+## Conetext:
 
 This project is actualy were we wanted to try and land a rocket using 
 reinforcement learing model . 
