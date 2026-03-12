@@ -9,7 +9,7 @@ for the model and training that model in our custom environment .
 
 ## Demo:
 
-![video_1](images/rl_rocketlanding.mp4 "rl_rocket landing demo video")
+https://github.com/user-attachments/assets/2699ee18-e873-4916-8749-cb969f9d82b0
 ![img_1](images/image2.png "Out of control")
 ![img_1](images/trying_to_land.png "Trying to land ")
 
